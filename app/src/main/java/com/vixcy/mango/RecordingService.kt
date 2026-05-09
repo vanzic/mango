@@ -151,7 +151,7 @@ class RecordingService : Service() {
         manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
             override fun onOpened(camera: CameraDevice) {
                 cameraDevice = camera
-                startNewChunk(uploadPrevious = false)
+                startNewChunk()
             }
             override fun onDisconnected(camera: CameraDevice) { camera.close() }
             override fun onError(camera: CameraDevice, error: Int) { camera.close() }
@@ -159,11 +159,7 @@ class RecordingService : Service() {
     }
 
     @Suppress("NewApi")
-    private fun startNewChunk(uploadPrevious: Boolean) {
-        if (uploadPrevious) {
-            currentFile?.let { enqueueUpload(it) }
-        }
-
+    private fun startNewChunk() {
         val file = createOutputFile()
         currentFile = file
 
@@ -208,16 +204,27 @@ class RecordingService : Service() {
 
     private fun rotateChunk() {
         if (!isRecording) return
-        try {
-            captureSession?.stopRepeating()
-            captureSession?.abortCaptures()
-            mediaRecorder?.stop()
-            mediaRecorder?.release()
+
+        // Snapshot the file reference before async work touches it
+        val prevFile = currentFile
+
+        // Tell the camera to stop producing frames. Each op in its own try-catch:
+        // a single shared try block means a stopRepeating() throw skips stop(),
+        // leaving the moov atom unwritten → 0-sec file.
+        try { captureSession?.stopRepeating()  } catch (e: Exception) { e.printStackTrace() }
+        try { captureSession?.abortCaptures()  } catch (e: Exception) { e.printStackTrace() }
+
+        // Post recorder finalization to the camera thread so it runs AFTER
+        // stopRepeating/abortCaptures have been processed by the camera HAL,
+        // not racing with in-flight frame delivery to the encoder surface.
+        cameraHandler.post {
+            try { mediaRecorder?.stop()    } catch (e: Exception) { e.printStackTrace() }
+            try { mediaRecorder?.release() } catch (e: Exception) { e.printStackTrace() }
             mediaRecorder = null
-        } catch (e: Exception) {
-            e.printStackTrace()
+
+            prevFile?.let { enqueueUpload(it) }
+            startNewChunk()
         }
-        startNewChunk(uploadPrevious = true)
     }
 
     private fun stopRecording() {
@@ -226,25 +233,44 @@ class RecordingService : Service() {
         savePrefs(false)
         cancelWatchdog()
 
-        try {
-            captureSession?.stopRepeating()
-            captureSession?.abortCaptures()
-            mediaRecorder?.stop()
-            mediaRecorder?.release()
-            mediaRecorder = null
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
-        currentFile?.let { enqueueUpload(it) }
+        // Snapshot before the camera thread touches currentFile
+        val fileToUpload = currentFile
         currentFile = null
 
-        cameraDevice?.close()
-        cameraDevice = null
-        if (::cameraThread.isInitialized) cameraThread.quitSafely()
+        if (!::cameraHandler.isInitialized) {
+            // Camera was never opened (e.g. stop pressed before camera finished opening)
+            fileToUpload?.let { enqueueUpload(it) }
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
 
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        // Step 1 (main thread): signal the camera to stop sending frames.
+        // Isolated try-catch — a failure here must NOT prevent recorder finalization.
+        try { captureSession?.stopRepeating() } catch (e: Exception) { e.printStackTrace() }
+
+        // Step 2 (camera thread): finalize the recorder AFTER the camera HAL has
+        // processed the stop command. Previously this ran on the main thread immediately
+        // after posting stopRepeating, so stop() raced with in-flight frames → the
+        // encoder surface received frames after stop() was called, which threw a
+        // RuntimeException that the single shared catch block swallowed, leaving the
+        // file with no moov atom → 0:00 on Telegram.
+        cameraHandler.post {
+            try { mediaRecorder?.stop()    } catch (e: Exception) { e.printStackTrace() }
+            try { mediaRecorder?.release() } catch (e: Exception) { e.printStackTrace() }
+            mediaRecorder = null
+
+            try { captureSession?.close(); captureSession = null } catch (e: Exception) {}
+            try { cameraDevice?.close();   cameraDevice   = null } catch (e: Exception) {}
+
+            // Service teardown must happen on the main thread
+            Handler(android.os.Looper.getMainLooper()).post {
+                fileToUpload?.let { enqueueUpload(it) }
+                cameraThread.quitSafely()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+        }
     }
 
     // ── Upload ─────────────────────────────────────────────────────────────────
