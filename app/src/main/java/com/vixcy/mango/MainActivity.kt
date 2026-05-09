@@ -55,8 +55,12 @@ class MainActivity : AppCompatActivity() {
 
     // ── State ──────────────────────────────────────────────────────────────────
     private var isRecording        = false
-    private var selectedWidth      = 1280
-    private var selectedHeight     = 720
+    // baseVideoHeight is the quality tier (720 / 1080 / 2160).
+    // selectedWidth/selectedHeight are DERIVED from baseVideoHeight + aspectRatio
+    // every time either changes. Never set them directly.
+    private var baseVideoHeight    = 720
+    private var selectedWidth      = 1280   // recomputed by computeAndUpdateDimensions()
+    private var selectedHeight     = 720    // recomputed by computeAndUpdateDimensions()
     private var selectedBitrate    = 2_000_000
     private var selectedFps        = 30
     private var selectedDurationMin = 10
@@ -105,6 +109,7 @@ class MainActivity : AppCompatActivity() {
 
         bindViews()
         requestPermissions()
+        computeAndUpdateDimensions()   // set selectedWidth/Height before any chip setup
         restoreState()
         setupQualityChips()
         setupFpsChips()
@@ -182,18 +187,20 @@ class MainActivity : AppCompatActivity() {
     // ══════════════════════════════════════════════════════════════════════════
 
     private fun setupQualityChips() {
-        // Initial visual state already set via XML (chip_bg_selected/unselected).
-        // Touch handlers registered — guard in selectQuality prevents same-chip re-fire.
-        addChipTouchFeedback(chip720p)  { selectQuality(chip720p,  1280, 720,  2_000_000) }
-        addChipTouchFeedback(chip1080p) { selectQuality(chip1080p, 1920, 1080, 8_000_000) }
-        addChipTouchFeedback(chip4k)    { selectQuality(chip4k,    3840, 2160, 40_000_000) }
+        // Quality only specifies the BASE HEIGHT (pixel count tier) and bitrate.
+        // Actual width is computed by computeAndUpdateDimensions() from baseVideoHeight
+        // combined with the currently selected aspect ratio. This ensures a 4:3 + 1080p
+        // selection records at 1440×1080, not 1920×1080.
+        addChipTouchFeedback(chip720p)  { selectQuality(chip720p,   720, 2_000_000) }
+        addChipTouchFeedback(chip1080p) { selectQuality(chip1080p, 1080, 8_000_000) }
+        addChipTouchFeedback(chip4k)    { selectQuality(chip4k,    2160, 40_000_000) }
     }
 
-    private fun selectQuality(chip: TextView, w: Int, h: Int, bitrate: Int) {
-        if (selectedWidth == w && selectedHeight == h && selectedBitrate == bitrate) return
-        selectedWidth   = w
-        selectedHeight  = h
+    private fun selectQuality(chip: TextView, baseH: Int, bitrate: Int) {
+        if (baseVideoHeight == baseH && selectedBitrate == bitrate) return
+        baseVideoHeight = baseH
         selectedBitrate = bitrate
+        computeAndUpdateDimensions()
         listOf(chip720p, chip1080p, chip4k).forEach { setChipInactive(it) }
         setChipActive(chip)
         updateSliderMax()
@@ -257,9 +264,34 @@ class MainActivity : AppCompatActivity() {
         if (aspectRatioW == w && aspectRatioH == h) return
         aspectRatioW = w
         aspectRatioH = h
+        computeAndUpdateDimensions()    // update selectedWidth/Height for recording
         listOf(chipAspect16_9, chipAspect4_3, chipAspect1_1).forEach { setChipInactive(it) }
         setChipActive(chip)
         applyAspectRatioToPreview()
+    }
+
+    /**
+     * Derives selectedWidth/selectedHeight from the current quality tier and aspect ratio.
+     *
+     * Strategy: keep baseVideoHeight as the "quality anchor" and compute width from the
+     * aspect ratio. Always round width DOWN to the nearest even number — MediaRecorder and
+     * H.264 both require even dimensions.
+     *
+     * Examples (baseVideoHeight = 1080):
+     *   16:9  → 1920 × 1080   (standard full HD)
+     *    4:3  → 1440 × 1080   (4:3 at 1080p)
+     *    1:1  → 1080 × 1080   (square)
+     *
+     * Examples (baseVideoHeight = 720):
+     *   16:9  → 1280 × 720
+     *    4:3  →  960 × 720
+     *    1:1  →  720 × 720
+     */
+    private fun computeAndUpdateDimensions() {
+        selectedHeight = baseVideoHeight
+        // Round to nearest even number (H.264 codec requirement)
+        val rawWidth = (baseVideoHeight * aspectRatioW / aspectRatioH).toInt()
+        selectedWidth = if (rawWidth % 2 == 0) rawWidth else rawWidth - 1
     }
 
     // ══════════════════════════════════════════════════════════════════════════
