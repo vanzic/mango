@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The sliding selection indicator inside a segmented control track.        -->
+<!-- Slightly lighter than the track, clearly elevated, no border needed.     -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#3A3A3C" />
+    <corners android:radius="7dp" />
+</shape>

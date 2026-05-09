@@ -34,7 +34,7 @@ import androidx.work.WorkManager
 
 class MainActivity : AppCompatActivity() {
 
-    // ── UI ─────────────────────────────────────────────────────────────────────
+    // ── UI — static views ─────────────────────────────────────────────────────
     private lateinit var textureView: TextureView
     private lateinit var statusChip: LinearLayout
     private lateinit var vStatusDot: View
@@ -42,48 +42,55 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvDurationValue: TextView
     private lateinit var tvFileSizeEstimate: TextView
     private lateinit var seekDuration: SeekBar
+
+    // ── Camera-overlay pills ───────────────────────────────────────────────────
+    // Top-left: status pill (always visible — Ready / Rec)
+    private lateinit var statusOverlayPill: LinearLayout
+    private lateinit var vOverlayStatusDot: View
+    private lateinit var tvOverlayStatus: TextView
+    private var overlayDotAnimators: List<Animator>? = null
+
+    // Bottom-left: upload countdown / Uploading... / Uploaded
+    private lateinit var uploadOverlayPill: LinearLayout
+    private lateinit var vUploadOverlayDot: View
+    private lateinit var tvUploadOverlayStatus: TextView
+    private var uploadOverlayDotAnimators: List<Animator>? = null
+    // True while WorkManager shows RUNNING/ENQUEUED — suppresses countdown updates
+    private var isCurrentlyUploading = false
+
+    // ── Record button ─────────────────────────────────────────────────────────
     private lateinit var btnToggleRecording: TextView
-    // Section labels — pulsed on every selection change ("system heard you")
+
+    // ── Section labels — pulsed on every control change ("system heard you") ──
     private lateinit var tvLabelQuality: TextView
     private lateinit var tvLabelFrameRate: TextView
-    private lateinit var tvLabelAspectRatio: TextView
     private lateinit var tvLabelDuration: TextView
-    private lateinit var chip720p: TextView
-    private lateinit var chip1080p: TextView
-    private lateinit var chip4k: TextView
-    private lateinit var chip24fps: TextView
-    private lateinit var chip30fps: TextView
-    private lateinit var chip60fps: TextView
-    private lateinit var chipAspect16_9: TextView
-    private lateinit var chipAspect4_3: TextView
-    private lateinit var chipAspect1_1: TextView
 
-    // ── Upload status chip ─────────────────────────────────────────────────────
-    private lateinit var uploadStatusChip: LinearLayout
-    private lateinit var vUploadDot: View
-    private lateinit var tvUploadStatus: TextView
-    // Breathing animators for the upload dot — stored so we can cancel on completion
-    private var uploadDotAnimators: List<Animator>? = null
-    // Tracks whether we were uploading so we can detect the "just finished" transition
+    // ── Upload state guards ────────────────────────────────────────────────────
     private var wasUploadActive = false
-    // Delays the chip fade-out after "UPLOADED ✓" so the user can read it
     private val uploadChipHandler = Handler(Looper.getMainLooper())
-    private val uploadChipHideRunnable = Runnable { hideUploadChip() }
+    private val uploadChipHideRunnable = Runnable { hideUploadOverlay() }
 
-    // ── Elapsed recording timer ────────────────────────────────────────────────
-    // Drives the "REC • 00:03:42" live readout in the status chip.
-    // Psychology: a ticking timer is the strongest possible proof that the system
-    // is alive and working. It answers "is it recording?" without any UI chrome.
+    // ── Segmented controls ────────────────────────────────────────────────────
+    private lateinit var qualityControl: SegmentedControl
+    private lateinit var fpsControl: SegmentedControl
+
+    // ── Recording timer ────────────────────────────────────────────────────────
+    // Fires every second while recording.
+    // Updates "upload in  MM:SS" countdown — suppressed while uploading.
     private val timerHandler = Handler(Looper.getMainLooper())
-    private var recordingStartMs = 0L   // SystemClock.elapsedRealtime() at start
+    private var recordingStartMs = 0L
     private val timerRunnable = object : Runnable {
         override fun run() {
-            val elapsed = SystemClock.elapsedRealtime() - recordingStartMs
-            val s = (elapsed / 1000).toInt()
-            val h = s / 3600; val m = (s % 3600) / 60; val sec = s % 60
-            // Monospace font prevents digit-width jitter as numbers change
-            tvStatus.text = if (h > 0) "REC • %02d:%02d:%02d".format(h, m, sec)
-                            else        "REC • %02d:%02d".format(m, sec)
+            if (!isCurrentlyUploading) {
+                val totalElapsedMs = SystemClock.elapsedRealtime() - recordingStartMs
+                val chunkDurationMs = selectedDurationMin * 60 * 1000L
+                val chunkElapsedMs = totalElapsedMs % chunkDurationMs
+                val uploadInMs = chunkDurationMs - chunkElapsedMs
+                val uploadInSec = ((uploadInMs + 999) / 1000).toInt().coerceAtLeast(0)
+                tvUploadOverlayStatus.text =
+                    "upload in  %02d:%02d".format(uploadInSec / 60, uploadInSec % 60)
+            }
             timerHandler.postDelayed(this, 1000)
         }
     }
@@ -95,35 +102,29 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cameraHandler: Handler
 
     // ── State ──────────────────────────────────────────────────────────────────
-    private var isRecording        = false
+    private var isRecording = false
     // baseVideoHeight is the quality tier (720 / 1080 / 2160).
-    // selectedWidth/selectedHeight are DERIVED from baseVideoHeight + aspectRatio
-    // every time either changes. Never set them directly.
-    private var baseVideoHeight    = 720
-    private var selectedWidth      = 1280   // recomputed by computeAndUpdateDimensions()
-    private var selectedHeight     = 720    // recomputed by computeAndUpdateDimensions()
-    private var selectedBitrate    = 2_000_000
-    private var selectedFps        = 30
+    // selectedWidth/Height are DERIVED from baseVideoHeight + aspectRatio each time either changes.
+    private var baseVideoHeight = 720
+    private var selectedWidth = 1280
+    private var selectedHeight = 720
+    private var selectedBitrate = 2_000_000
+    private var selectedFps = 30
     private var selectedDurationMin = 10
-    private var lastEstimatedSizeMb = -1    // -1 sentinel → force first render
-    private var aspectRatioW       = 16f
-    private var aspectRatioH       = 9f
+    private var lastEstimatedSizeMb = -1
     private var hasAnimatedFirstAppearance = false
 
-    // ── Button background (programmatic GradientDrawable for color animation) ──
-    // Rule: background color cannot be animated via compositable GPU properties,
-    //       but animating it on a GradientDrawable avoids a full layout pass.
+    // ── Record button GradientDrawable ────────────────────────────────────────
+    // Corner radius = 16dp (pill button). Color animates orange ↔ red.
     private val btnRecordDrawable by lazy {
         GradientDrawable().apply {
             cornerRadius = 16f * resources.displayMetrics.density
-            setColor(getColor(R.color.mango_accent)) // starts as idle/orange
+            setColor(getColor(R.color.mango_accent))
         }
     }
     private var btnColorAnimator: ValueAnimator? = null
 
-    // ── File size ValueAnimator reference (cancellation fix) ──────────────────
-    // Bug fix: without this, rapid slider drags stacked multiple ValueAnimators
-    // all updating the same TextView → flickering.
+    // ── File size ValueAnimator (cancellation guard) ──────────────────────────
     private var fileSizeAnimator: ValueAnimator? = null
 
     // ── Status dot breathing ───────────────────────────────────────────────────
@@ -131,12 +132,9 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val PERM_REQUEST = 101
-        private const val PREFS        = "mango_prefs"
-        // Breathing cadences (per design doc):
-        //   IDLE → 1400ms ("watching quietly" — very slow, calm)
-        //   REC  →  900ms ("actively recording" — slightly elevated)
-        private const val BREATHING_IDLE_MS = 1400L
-        private const val BREATHING_REC_MS  =  900L
+        private const val PREFS = "mango_prefs"
+        private const val BREATHING_IDLE_MS = 1400L   // "watching quietly"
+        private const val BREATHING_REC_MS = 900L     // "actively recording"
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -150,35 +148,27 @@ class MainActivity : AppCompatActivity() {
 
         bindViews()
         requestPermissions()
-        computeAndUpdateDimensions()   // set selectedWidth/Height before any chip setup
+        computeAndUpdateDimensions()
         restoreState()
-        setupQualityChips()
-        setupFpsChips()
-        setupAspectRatioChips()
+        setupQualityControl()
+        setupFpsControl()
         setupDurationSlider()
-        setupToggleButton()
+        setupRecordButton()
         observeUploadState()
 
-        // BUG FIX #1: Compute initial file size immediately (no animation on first render).
-        // Previously: selectQuality/selectFps guards returned early because defaults matched,
-        // so updateFileSizeEstimate() was never called. lastEstimatedSizeMb stayed 0.
-        // When user first moved the slider, the ValueAnimator counted from 0 → actual,
-        // briefly showing "≈ 0 MB / clip". Fixed by calling with animate=false here.
+        // Initial file size — no animation on first render
         updateFileSizeEstimate(animate = false)
 
-        // BUG FIX #3: Staggered entry must run AFTER layout pass.
-        // Previously called synchronously in onCreate() — views had width/height=0,
-        // causing alpha=0 to flash before layout, and translation offsets to be wrong.
-        // decorView.post() defers until first layout pass completes.
+        // Staggered entry runs after layout pass so views have real dimensions
         if (!hasAnimatedFirstAppearance) {
             hasAnimatedFirstAppearance = true
             window.decorView.post {
                 AnimationUtils.animateStaggeredEntry(listOf(
-                    findViewById(R.id.statusChip),
+                    statusOverlayPill,
+                    statusChip,
                     findViewById(R.id.qualitySelector),
+                    tvLabelFrameRate,
                     findViewById(R.id.fpsSelector),
-                    findViewById(R.id.aspectRatioSelector),
-                    seekDuration.parent as View,
                     seekDuration,
                     tvFileSizeEstimate,
                     btnToggleRecording
@@ -195,99 +185,94 @@ class MainActivity : AppCompatActivity() {
         tvDurationValue    = findViewById(R.id.tvDurationValue)
         tvFileSizeEstimate = findViewById(R.id.tvFileSizeEstimate)
         seekDuration       = findViewById(R.id.seekDuration)
-        btnToggleRecording = findViewById(R.id.btnToggleRecording)
-        uploadStatusChip   = findViewById(R.id.uploadStatusChip)
-        vUploadDot         = findViewById(R.id.vUploadDot)
-        tvUploadStatus     = findViewById(R.id.tvUploadStatus)
+
+        statusOverlayPill    = findViewById(R.id.statusOverlayPill)
+        vOverlayStatusDot    = findViewById(R.id.vOverlayStatusDot)
+        tvOverlayStatus      = findViewById(R.id.tvOverlayStatus)
+        uploadOverlayPill    = findViewById(R.id.uploadOverlayPill)
+        vUploadOverlayDot    = findViewById(R.id.vUploadOverlayDot)
+        tvUploadOverlayStatus = findViewById(R.id.tvUploadOverlayStatus)
+
+        btnToggleRecording   = findViewById(R.id.btnToggleRecording)
+
         tvLabelQuality     = findViewById(R.id.tvLabelQuality)
         tvLabelFrameRate   = findViewById(R.id.tvLabelFrameRate)
-        tvLabelAspectRatio = findViewById(R.id.tvLabelAspectRatio)
         tvLabelDuration    = findViewById(R.id.tvLabelDuration)
-        chip720p           = findViewById(R.id.chip720p)
-        chip1080p          = findViewById(R.id.chip1080p)
-        chip4k             = findViewById(R.id.chip4k)
-        chip24fps          = findViewById(R.id.chip24fps)
-        chip30fps          = findViewById(R.id.chip30fps)
-        chip60fps          = findViewById(R.id.chip60fps)
-        chipAspect16_9     = findViewById(R.id.chipAspect16_9)
-        chipAspect4_3      = findViewById(R.id.chipAspect4_3)
-        chipAspect1_1      = findViewById(R.id.chipAspect1_1)
 
-        // Attach programmatic GradientDrawable so color can animate smoothly
+        // Programmatic shape — animates corner radius (circle ↔ square) and fill color
         btnToggleRecording.background = btnRecordDrawable
     }
 
     private fun restoreState() {
         val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         isRecording = prefs.getBoolean("recording_active", false)
-        // BUG FIX #4: setRecordingUI() was called here AND again in onCreate().
-        // Two calls cause a redundant crossfade attempt and a double startBreathing()
-        // guard hit. Now called only once from setRecordingUI() at end of onCreate().
         if (isRecording) {
             textureView.visibility = View.INVISIBLE
             textureView.alpha = 0f
+            uploadOverlayPill.alpha = 1f
         } else {
             textureView.visibility = View.VISIBLE
             textureView.alpha = 1f
+            uploadOverlayPill.alpha = 0f
         }
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // Quality chips
+    // Segmented controls
     // ══════════════════════════════════════════════════════════════════════════
 
-    private fun setupQualityChips() {
-        // Quality only specifies the BASE HEIGHT (pixel count tier) and bitrate.
-        // Actual width is computed by computeAndUpdateDimensions() from baseVideoHeight
-        // combined with the currently selected aspect ratio. This ensures a 4:3 + 1080p
-        // selection records at 1440×1080, not 1920×1080.
-        addChipTouchFeedback(chip720p)  { selectQuality(chip720p,   720, 2_000_000) }
-        addChipTouchFeedback(chip1080p) { selectQuality(chip1080p, 1080, 8_000_000) }
-        addChipTouchFeedback(chip4k)    { selectQuality(chip4k,    2160, 40_000_000) }
-    }
-
-    private fun selectQuality(chip: TextView, baseH: Int, bitrate: Int) {
-        if (baseVideoHeight == baseH && selectedBitrate == bitrate) return
-        baseVideoHeight = baseH
-        selectedBitrate = bitrate
-        computeAndUpdateDimensions()
-        listOf(chip720p, chip1080p, chip4k).forEach { setChipInactive(it) }
-        setChipActive(chip)
-        AnimationUtils.pulseLabel(tvLabelQuality)  // "I see you changed quality"
-        updateSliderMax()
-        updateFileSizeEstimate()
-        if (!isRecording) closePreviewCamera { openPreviewCamera() }
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // FPS chips
-    // ══════════════════════════════════════════════════════════════════════════
-
-    private fun setupFpsChips() {
-        addChipTouchFeedback(chip24fps) { selectFps(chip24fps, 24) }
-        addChipTouchFeedback(chip30fps) { selectFps(chip30fps, 30) }
-
-        // NEW: Check hardware capability before offering 60fps.
-        // Rule: never present a control whose effect will be silently ignored.
-        // If camera doesn't support it, disable chip at 0.38 opacity.
-        if (is60fpsSupported()) {
-            addChipTouchFeedback(chip60fps) { selectFps(chip60fps, 60) }
-        } else {
-            ChipInteraction.setChipDisabled(chip60fps)
+    private fun setupQualityControl() {
+        qualityControl = SegmentedControl(
+            track    = findViewById(R.id.qualitySelector),
+            pill     = findViewById(R.id.qualityPill),
+            segments = listOf(
+                findViewById(R.id.seg720p),
+                findViewById(R.id.seg1080p),
+                findViewById(R.id.seg4k)
+            )
+        )
+        val defaultIndex = when (baseVideoHeight) { 720 -> 0; 1080 -> 1; else -> 2 }
+        qualityControl.setup(defaultIndex) { index ->
+            val (h, bitrate) = when (index) {
+                0    -> 720 to 2_000_000
+                1    -> 1080 to 8_000_000
+                else -> 2160 to 40_000_000
+            }
+            if (baseVideoHeight == h && selectedBitrate == bitrate) return@setup
+            baseVideoHeight = h
+            selectedBitrate = bitrate
+            computeAndUpdateDimensions()
+            AnimationUtils.pulseLabel(tvLabelQuality)
+            updateSliderMax()
+            updateFileSizeEstimate()
+            if (!isRecording) closePreviewCamera { openPreviewCamera() }
         }
     }
 
-    private fun selectFps(chip: TextView, fps: Int) {
-        if (selectedFps == fps) return
-        selectedFps = fps
-        listOf(chip24fps, chip30fps, chip60fps).forEach { setChipInactive(it) }
-        setChipActive(chip)
-        AnimationUtils.pulseLabel(tvLabelFrameRate)
-        updateFileSizeEstimate()
-        if (!isRecording) closePreviewCamera { openPreviewCamera() }
+    private fun setupFpsControl() {
+        fpsControl = SegmentedControl(
+            track    = findViewById(R.id.fpsSelector),
+            pill     = findViewById(R.id.fpsPill),
+            segments = listOf(
+                findViewById(R.id.seg24fps),
+                findViewById(R.id.seg30fps),
+                findViewById(R.id.seg60fps)
+            )
+        )
+        val defaultIndex = when (selectedFps) { 24 -> 0; 30 -> 1; else -> 2 }
+        fpsControl.setup(defaultIndex) { index ->
+            val fps = when (index) { 0 -> 24; 1 -> 30; else -> 60 }
+            if (selectedFps == fps) return@setup
+            selectedFps = fps
+            AnimationUtils.pulseLabel(tvLabelFrameRate)
+            updateSliderMax()   // fps affects the 2 GB ceiling — recalculate before estimate
+            if (!isRecording) closePreviewCamera { openPreviewCamera() }
+        }
+        // Never show an option the hardware can't deliver
+        if (!is60fpsSupported()) fpsControl.disableSegment(2)
     }
 
-    /** Returns true if the back camera's high-speed config includes ≥60fps. */
+    /** Returns true if the back camera supports ≥60fps in high-speed config. */
     private fun is60fpsSupported(): Boolean = try {
         val manager = getSystemService(CAMERA_SERVICE) as CameraManager
         val cameraId = manager.cameraIdList.firstOrNull { id ->
@@ -296,54 +281,20 @@ class MainActivity : AppCompatActivity() {
         } ?: return false
         val map = manager.getCameraCharacteristics(cameraId)
             .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-        // High-speed ranges include 60fps if any upper bound ≥ 60
         map?.highSpeedVideoFpsRanges?.any { it.upper >= 60 } ?: false
-    } catch (e: Exception) {
-        false
-    }
+    } catch (e: Exception) { false }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // Aspect ratio chips
+    // Dimensions
     // ══════════════════════════════════════════════════════════════════════════
-
-    private fun setupAspectRatioChips() {
-        addChipTouchFeedback(chipAspect16_9) { selectAspectRatio(chipAspect16_9, 16f, 9f) }
-        addChipTouchFeedback(chipAspect4_3)  { selectAspectRatio(chipAspect4_3,  4f,  3f) }
-        addChipTouchFeedback(chipAspect1_1)  { selectAspectRatio(chipAspect1_1,  1f,  1f) }
-    }
-
-    private fun selectAspectRatio(chip: TextView, w: Float, h: Float) {
-        if (aspectRatioW == w && aspectRatioH == h) return
-        aspectRatioW = w
-        aspectRatioH = h
-        computeAndUpdateDimensions()    // update selectedWidth/Height for recording
-        listOf(chipAspect16_9, chipAspect4_3, chipAspect1_1).forEach { setChipInactive(it) }
-        setChipActive(chip)
-        AnimationUtils.pulseLabel(tvLabelAspectRatio)
-        applyAspectRatioToPreview()
-    }
 
     /**
-     * Derives selectedWidth/selectedHeight from the current quality tier and aspect ratio.
-     *
-     * Strategy: keep baseVideoHeight as the "quality anchor" and compute width from the
-     * aspect ratio. Always round width DOWN to the nearest even number — MediaRecorder and
-     * H.264 both require even dimensions.
-     *
-     * Examples (baseVideoHeight = 1080):
-     *   16:9  → 1920 × 1080   (standard full HD)
-     *    4:3  → 1440 × 1080   (4:3 at 1080p)
-     *    1:1  → 1080 × 1080   (square)
-     *
-     * Examples (baseVideoHeight = 720):
-     *   16:9  → 1280 × 720
-     *    4:3  →  960 × 720
-     *    1:1  →  720 × 720
+     * Derives selectedWidth/Height from the quality tier at native 16:9 aspect ratio.
+     * Width is rounded DOWN to the nearest even number (H.264 requirement).
      */
     private fun computeAndUpdateDimensions() {
         selectedHeight = baseVideoHeight
-        // Round to nearest even number (H.264 codec requirement)
-        val rawWidth = (baseVideoHeight * aspectRatioW / aspectRatioH).toInt()
+        val rawWidth = (baseVideoHeight * 16 / 9)
         selectedWidth = if (rawWidth % 2 == 0) rawWidth else rawWidth - 1
     }
 
@@ -354,7 +305,7 @@ class MainActivity : AppCompatActivity() {
     @Suppress("InlinedApi")
     private fun setupDurationSlider() {
         seekDuration.progress = 10
-        tvDurationValue.text  = "10 min"
+        tvDurationValue.text = "10 min"
         seekDuration.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
                 val mins = maxOf(1, progress)
@@ -365,7 +316,6 @@ class MainActivity : AppCompatActivity() {
                     updateFileSizeEstimate()
                     AnimationUtils.pulseLabel(tvLabelDuration)
                 }
-                // No per-tick haptic: haptic budget ≤4 per flow. Start/stop cover it.
             }
             override fun onStartTrackingTouch(sb: SeekBar) {
                 AnimationUtils.hapticFeedback(sb, AnimationUtils.HapticWeight.LIGHT)
@@ -376,50 +326,67 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    /**
+     * Derives the slider ceiling so the clip always stays strictly under 2 GB —
+     * Telegram's free-tier upload limit.
+     *
+     * Inverts the size formula:
+     *   sizeMb = bitrate × fpsFactor × durationSec / 8 / 1_000_000
+     *   → maxSec = limitMb × 8 × 1_000_000 / (bitrate × fpsFactor)
+     *
+     * Uses 1990 MB (10 MB safety margin) so rounding never sneaks past 2 GB.
+     * Clamped to a minimum of 1 minute so the slider is never unusable.
+     *
+     * Called whenever bitrate OR fps changes — both affect the ceiling.
+     */
     private fun updateSliderMax() {
-        val maxMin = when (selectedBitrate) {
-            2_000_000  -> 133
-            8_000_000  -> 33
-            40_000_000 -> 6
-            else       -> 33
-        }
+        val fpsFactor = selectedFps / 30.0
+        val limitMb   = 1990.0           // strictly under 2 GB
+        val maxSec    = (limitMb * 8 * 1_000_000) / (selectedBitrate * fpsFactor)
+        val maxMin    = maxOf(1, (maxSec / 60).toInt())
+
         seekDuration.max = maxMin
         if (seekDuration.progress > maxMin) seekDuration.progress = maxMin
         updateFileSizeEstimate()
     }
 
-    /**
-     * @param animate false on first call (avoids counting from 0 → actual on launch).
-     * BUG FIX #2: Cancels previous ValueAnimator before starting new one.
-     * Previously, rapid slider drags stacked N animators on the same TextView.
-     */
     private fun updateFileSizeEstimate(animate: Boolean = true) {
-        val fpsFactor   = selectedFps / 30.0
+        val fpsFactor = selectedFps / 30.0
         val durationSec = selectedDurationMin * 60
-        val sizeMb      = ((selectedBitrate * fpsFactor * durationSec) / 8 / 1_000_000).toInt()
+        val sizeMb = ((selectedBitrate * fpsFactor * durationSec) / 8 / 1_000_000).toInt()
         if (sizeMb == lastEstimatedSizeMb) return
+
+        val newText = formatClipSize(sizeMb)
 
         if (animate && lastEstimatedSizeMb > 0) {
             fileSizeAnimator?.cancel()
+            // Animate via MB integer internally; display text is reformatted each tick
             fileSizeAnimator = AnimationUtils.animateValueChange(
                 tvFileSizeEstimate, lastEstimatedSizeMb, sizeMb,
-                prefix = "≈ ", suffix = " MB / clip"
+                formatValue = { mb -> formatClipSize(mb) }
             )
         } else {
-            // First render or non-user-triggered: set directly, no animation
-            tvFileSizeEstimate.text = "≈ $sizeMb MB / clip"
+            tvFileSizeEstimate.text = newText
         }
         lastEstimatedSizeMb = sizeMb
     }
 
+    /** Below 1000 MB → "≈ 720 MB / clip". At or above → "≈ 1.4 GB / clip". */
+    private fun formatClipSize(mb: Int): String {
+        return if (mb < 1000) {
+            "≈ $mb MB / clip"
+        } else {
+            val gb = mb / 1000.0
+            "≈ ${"%.1f".format(gb)} GB / clip"
+        }
+    }
+
     // ══════════════════════════════════════════════════════════════════════════
-    // Recording toggle button
+    // Record button — circular tap target with morphing inner shape
     // ══════════════════════════════════════════════════════════════════════════
 
     @Suppress("InlinedApi")
-    private fun setupToggleButton() {
-        // setRecordingUI() is called once from onResume to sync button visual to state.
-        // Applying initial UI here avoids the double-call bug.
+    private fun setupRecordButton() {
         setRecordingUI(isRecording)
 
         btnToggleRecording.setOnTouchListener { v, event ->
@@ -439,8 +406,6 @@ class MainActivity : AppCompatActivity() {
                         damping   = AnimationUtils.SPRING_DAMPING_PRIMARY
                     )
                     v.performClick()
-                    // Action and spring-back are concurrent — design rule:
-                    // action must not wait for animation to complete.
                     if (isRecording) stopRecording() else startRecording()
                 }
                 MotionEvent.ACTION_CANCEL -> {
@@ -455,10 +420,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // Recording flow
+    // ══════════════════════════════════════════════════════════════════════════
+
     private fun startRecording() {
         closePreviewCamera {
-            // Persist the start timestamp so onResume() can reconstruct the elapsed
-            // timer correctly after the user backgrounds and returns to the app.
             recordingStartMs = SystemClock.elapsedRealtime()
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .putLong("recording_start_ms", recordingStartMs)
@@ -474,7 +441,6 @@ class MainActivity : AppCompatActivity() {
             }
             startForegroundService(intent)
 
-            // Fade out preview (easeOut — system-initiated, not touch-driven)
             textureView.animate()
                 .alpha(0f)
                 .setDuration(AnimationUtils.DURATION_SCREEN)
@@ -491,7 +457,6 @@ class MainActivity : AppCompatActivity() {
             action = RecordingService.ACTION_STOP
         })
 
-        // Fade in preview
         textureView.alpha = 0f
         textureView.visibility = View.VISIBLE
         textureView.animate()
@@ -505,58 +470,80 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // UI state management
+    // UI state machine
     // ══════════════════════════════════════════════════════════════════════════
 
     private fun setRecordingUI(recording: Boolean) {
         isRecording = recording
         if (recording) {
+            // ── Button: text → "Stop Recording", color orange → red ───────────────
             crossfadeText(btnToggleRecording, "Stop Recording")
             animateButtonColor(
-                from = getColor(R.color.mango_accent),  // orange
-                to   = getColor(R.color.mango_active)   // red
+                from = getColor(R.color.mango_accent),
+                to   = getColor(R.color.mango_active)
             )
-            vStatusDot.setBackgroundResource(R.drawable.dot_recording)
-            // Don't crossfade status to "REC" — the timer owns that slot.
-            // Set it directly so timer can begin updating it immediately.
-            tvStatus.text = "REC"
-            startStatusDotBreathing(BREATHING_REC_MS)  // 900ms — elevated cadence
 
-            // Status chip announces the state change with a spatial jolt.
-            // The spring-bounce reads as "something just happened here" —
-            // confirms the user's action without a modal or toast.
+            // ── Status chip (panel) ───────────────────────────────────────────────
+            vStatusDot.setBackgroundResource(R.drawable.dot_recording)
+            crossfadeText(tvStatus, "REC")
+            startStatusDotBreathing(BREATHING_REC_MS)
             AnimationUtils.announceScale(statusChip, peakScale = 1.06f)
 
-            // Start elapsed timer — the single most powerful "validating" signal.
-            // A ticking clock proves the system is alive, understood the command,
-            // and is actively working. Users stop second-guessing when they see time moving.
+            // ── Status overlay pill (top-left) ────────────────────────────────────
+            vOverlayStatusDot.setBackgroundResource(R.drawable.dot_recording)
+            tvOverlayStatus.text = "Rec"
+            startOverlayDotBreathing()
+
+            // ── Upload countdown pill: fade in ────────────────────────────────────
+            tvUploadOverlayStatus.text =
+                "upload in  %02d:%02d".format(selectedDurationMin, 0)
+            vUploadOverlayDot.visibility = View.GONE
+            uploadOverlayPill.animate().alpha(1f)
+                .setDuration(AnimationUtils.DURATION_ELEMENT)
+                .setInterpolator(DecelerateInterpolator()).start()
             startElapsedTimer()
+
             setControlsEnabled(false)
         } else {
-            // Stop timer before crossfade so "REC • 00:03:42" doesn't linger
+            // ── Button: text → "Start Recording", color red → orange ─────────────
             stopElapsedTimer()
-
             crossfadeText(btnToggleRecording, "Start Recording")
             animateButtonColor(
-                from = getColor(R.color.mango_active),  // red
-                to   = getColor(R.color.mango_accent)   // orange
+                from = getColor(R.color.mango_active),
+                to   = getColor(R.color.mango_accent)
             )
+
+            // ── Status chip (panel) ───────────────────────────────────────────────
             vStatusDot.setBackgroundResource(R.drawable.dot_ready)
             crossfadeText(tvStatus, "IDLE")
-            startStatusDotBreathing(BREATHING_IDLE_MS) // 1400ms — calm, watching
-
-            // Announce the stop too — confirms the user that recording ended
+            startStatusDotBreathing(BREATHING_IDLE_MS)
             AnimationUtils.announceScale(statusChip, peakScale = 1.04f)
+
+            // ── Status overlay pill (top-left) ────────────────────────────────────
+            stopOverlayDotBreathing()
+            vOverlayStatusDot.setBackgroundResource(R.drawable.dot_ready)
+            tvOverlayStatus.text = "Ready"
+
+            // ── Upload countdown pill: fade out ───────────────────────────────────
+            uploadOverlayPill.animate().alpha(0f)
+                .setDuration(AnimationUtils.DURATION_ELEMENT)
+                .setInterpolator(DecelerateInterpolator()).start()
+
             setControlsEnabled(true)
         }
     }
 
-    // ── Elapsed recording timer ────────────────────────────────────────────────
+    private fun animateButtonColor(from: Int, to: Int) {
+        if (from == to) return
+        btnColorAnimator?.cancel()
+        btnColorAnimator = AnimationUtils.animateButtonColor(btnRecordDrawable, from, to)
+    }
+
+    // ── Elapsed timer ─────────────────────────────────────────────────────────
 
     private fun startElapsedTimer() {
         timerHandler.removeCallbacks(timerRunnable)
-        // Post at 500ms — allows the initial "REC" text to read for a beat
-        // before the timer starts ticking, so the transition has a rhythm
+        // Small lead delay so "REC • 00:00" reads for one beat before counting
         timerHandler.postDelayed(timerRunnable, 500)
     }
 
@@ -564,144 +551,47 @@ class MainActivity : AppCompatActivity() {
         timerHandler.removeCallbacks(timerRunnable)
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    // Upload status chip
-    // ══════════════════════════════════════════════════════════════════════════
+    // ── Overlay status dot breathing ──────────────────────────────────────────
 
-    /**
-     * Observes all WorkManager tasks tagged UPLOAD_TAG.
-     *
-     * State machine:
-     *   RUNNING / ENQUEUED  →  show pulsing orange "UPLOADING" chip
-     *   Active → 0 active   →  show "UPLOADED ✓" with scale announcement,
-     *                           then auto-hide after 3 s
-     *   FAILED (any)        →  show "UPLOAD FAILED" briefly then hide
-     *   Idle on cold open   →  chip stays hidden (wasUploadActive guard)
-     *
-     * The wasUploadActive flag prevents a spurious "UPLOADED ✓" flash when the
-     * app reopens and sees old completed work in WorkManager's history.
-     */
-    private fun observeUploadState() {
-        WorkManager.getInstance(this)
-            .getWorkInfosByTagLiveData(UploadWorker.UPLOAD_TAG)
-            .observe(this) { workInfos ->
-                val active = workInfos.filter {
-                    it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED
-                }
-                val anyFailed = workInfos.any { it.state == WorkInfo.State.FAILED }
-
-                when {
-                    active.isNotEmpty() -> {
-                        // Cancel any scheduled hide — still uploading
-                        uploadChipHandler.removeCallbacks(uploadChipHideRunnable)
-                        wasUploadActive = true
-                        val count = active.size
-                        showUploadingChip(count)
-                    }
-                    wasUploadActive -> {
-                        // Transitioned from uploading → done
-                        wasUploadActive = false
-                        uploadChipHandler.removeCallbacks(uploadChipHideRunnable)
-                        if (anyFailed) {
-                            showUploadFailedChip()
-                        } else {
-                            showUploadedChip()
-                        }
-                        // Auto-hide after 3 s — long enough to read, short enough not to clutter
-                        uploadChipHandler.postDelayed(uploadChipHideRunnable, 3000)
-                    }
-                    // else: idle on cold open — leave chip hidden, no wasUploadActive set
-                }
-            }
+    private fun startOverlayDotBreathing() {
+        stopOverlayDotBreathing()
+        overlayDotAnimators = AnimationUtils.startBreathing(vOverlayStatusDot, BREATHING_REC_MS)
     }
 
-    /** Pulsing orange "↑ UPLOADING" or "↑ UPLOADING (N)" when N > 1. */
-    private fun showUploadingChip(count: Int) {
-        stopUploadDotBreathing()
-        vUploadDot.setBackgroundResource(R.drawable.dot_uploading)
-        tvUploadStatus.text = if (count > 1) "UPLOADING ($count)" else "UPLOADING"
-        tvUploadStatus.setTextColor(getColor(R.color.mango_text_primary))
-
-        // Reveal chip if currently hidden
-        if (uploadStatusChip.alpha < 0.5f) {
-            uploadStatusChip.animate()
-                .alpha(1f)
-                .setDuration(AnimationUtils.DURATION_ELEMENT)
-                .setInterpolator(DecelerateInterpolator())
-                .start()
-        }
-
-        // Dot breathes at 700ms — faster than REC (900ms), signals active network work
-        uploadDotAnimators = AnimationUtils.startBreathing(vUploadDot, durationMs = 700L)
+    private fun stopOverlayDotBreathing() {
+        overlayDotAnimators?.forEach { it.cancel() }
+        overlayDotAnimators = null
+        vOverlayStatusDot.alpha  = 1f
+        vOverlayStatusDot.scaleX = 1f
+        vOverlayStatusDot.scaleY = 1f
     }
 
-    /** Green "UPLOADED ✓" with spatial announcement — confirms the work is done. */
-    private fun showUploadedChip() {
-        stopUploadDotBreathing()
-        vUploadDot.setBackgroundResource(R.drawable.dot_ready)          // green
-        tvUploadStatus.text = "UPLOADED ✓"
-        tvUploadStatus.setTextColor(getColor(R.color.mango_dot_ready))  // green text
+    // ── Status dot breathing ───────────────────────────────────────────────────
 
-        // Chip announces itself: snaps slightly larger then springs to 1.0
-        // Same pattern as the status chip state-change ceremony.
-        AnimationUtils.announceScale(uploadStatusChip, peakScale = 1.06f)
-
-        // Ensure visible
-        uploadStatusChip.animate()
-            .alpha(1f)
-            .setDuration(AnimationUtils.DURATION_MICRO)
-            .setInterpolator(DecelerateInterpolator())
-            .start()
+    private fun startStatusDotBreathing(durationMs: Long) {
+        stopStatusDotBreathing()
+        statusDotAnimators = AnimationUtils.startBreathing(vStatusDot, durationMs)
     }
 
-    /** Red "UPLOAD FAILED" — honest, quiet, no haptic (not user's fault). */
-    private fun showUploadFailedChip() {
-        stopUploadDotBreathing()
-        vUploadDot.setBackgroundResource(R.drawable.dot_recording)     // red
-        tvUploadStatus.text = "UPLOAD FAILED"
-        tvUploadStatus.setTextColor(getColor(R.color.mango_active))    // red text
-
-        uploadStatusChip.animate()
-            .alpha(1f)
-            .setDuration(AnimationUtils.DURATION_MICRO)
-            .setInterpolator(DecelerateInterpolator())
-            .start()
+    private fun stopStatusDotBreathing() {
+        statusDotAnimators?.forEach { it.cancel() }
+        statusDotAnimators = null
+        vStatusDot.alpha  = 1f
+        vStatusDot.scaleX = 1f
+        vStatusDot.scaleY = 1f
     }
 
-    /** Fades the chip out smoothly — called 3s after upload completes. */
-    private fun hideUploadChip() {
-        stopUploadDotBreathing()
-        uploadStatusChip.animate()
-            .alpha(0f)
-            .setDuration(AnimationUtils.DURATION_COMPONENT)
-            .setInterpolator(DecelerateInterpolator())
-            .start()
+    // ── Controls dim/enable ───────────────────────────────────────────────────
+
+    private fun setControlsEnabled(enabled: Boolean) {
+        qualityControl.setEnabled(enabled)
+        fpsControl.setEnabled(enabled)
+        seekDuration.isEnabled = enabled
+        AnimationUtils.animateAlphaTransition(seekDuration, if (enabled) 1.0f else 0.38f)
     }
 
-    private fun stopUploadDotBreathing() {
-        uploadDotAnimators?.forEach { it.cancel() }
-        uploadDotAnimators = null
-        vUploadDot.alpha  = 1f
-        vUploadDot.scaleX = 1f
-        vUploadDot.scaleY = 1f
-    }
+    // ── Text crossfade ────────────────────────────────────────────────────────
 
-    /**
-     * Animates button background color between states.
-     * NEW: replaces the previous setBackgroundResource() snap.
-     * Uses ArgbEvaluator on the GradientDrawable fill — keeps corner radius
-     * and avoids triggering a layout pass.
-     * NEW: replaces the previous setBackgroundResource() snap.
-     * Uses ArgbEvaluator on the GradientDrawable fill — keeps corner radius
-     * and avoids triggering a layout pass.
-     */
-    private fun animateButtonColor(from: Int, to: Int) {
-        if (from == to) return
-        btnColorAnimator?.cancel()
-        btnColorAnimator = AnimationUtils.animateButtonColor(btnRecordDrawable, from, to)
-    }
-
-    /** Crossfade: old text fades out (80ms), new text fades in (160ms). */
     private fun crossfadeText(tv: TextView, newText: String) {
         if (tv.text == newText) return
         tv.animate()
@@ -718,97 +608,117 @@ class MainActivity : AppCompatActivity() {
             }.start()
     }
 
-    private fun setControlsEnabled(enabled: Boolean) {
-        val targetAlpha = if (enabled) 1.0f else 0.38f
-        listOf(chip720p, chip1080p, chip4k,
-               chip24fps, chip30fps, chip60fps,
-               chipAspect16_9, chipAspect4_3, chipAspect1_1,
-               seekDuration).forEach {
-            it.isEnabled = enabled
-            AnimationUtils.animateAlphaTransition(it, targetAlpha)
-        }
-    }
-
-    private fun setChipActive(chip: TextView) {
-        ChipInteraction.setChipActive(chip)
-    }
-
-    private fun setChipInactive(chip: TextView) {
-        ChipInteraction.setChipInactive(chip)
-    }
-
     // ══════════════════════════════════════════════════════════════════════════
-    // Chip touch feedback
+    // Upload status chip
     // ══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Three-phase interaction:
-     *   ACTION_DOWN   → Phase 1 Recognition: haptic + scale press (0.93)
-     *   ACTION_UP     → Phase 3 Release: if within bounds → snap-lock (setChipActive);
-     *                                    if outside bounds → neutral spring-back
-     *   ACTION_CANCEL → Neutral spring-back (user changed their mind mid-press)
-     *
-     * BUG FIX #5: Previously ACTION_UP called onClicked() unconditionally.
-     * A press-drag-release outside the chip would still trigger selection.
-     * Now bounds-checked: if finger lifted outside the view, treat as cancel.
-     *
-     * BUG FIX: Previously both onChipReleased() AND setChipActive() each
-     * started a spring to 1.0 → two competing animations. Resolved by having
-     * setChipActive() own the release (snap-lock spring), and onChipCancelled()
-     * own the neutral release. The ACTION_UP path no longer calls onChipReleased().
+     * Observes WorkManager tasks tagged UPLOAD_TAG.
+     * State machine:
+     *   RUNNING / ENQUEUED → pulsing orange "UPLOADING"
+     *   Active → 0 active  → "UPLOADED ✓" with scale announcement, auto-hides after 3s
+     *   FAILED             → "UPLOAD FAILED" then auto-hides
+     *   Idle on cold open  → chip stays hidden (wasUploadActive guard)
      */
-    @Suppress("InlinedApi")
-    private fun addChipTouchFeedback(chip: TextView, onClicked: () -> Unit) {
-        chip.setOnTouchListener { v, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    ChipInteraction.onChipPressed(v)
+    /**
+     * Drives the bottom-left upload overlay pill via WorkManager LiveData.
+     *
+     * RUNNING/ENQUEUED → "● Uploading..."  (blue dot, pulsing)
+     * Active → done    → "● Uploaded"      (green dot, 3 s then countdown resumes)
+     * FAILED           → pill fades out    (honest, no drama)
+     * Idle cold-open   → no change         (wasUploadActive guard)
+     */
+    private fun observeUploadState() {
+        WorkManager.getInstance(this)
+            .getWorkInfosByTagLiveData(UploadWorker.UPLOAD_TAG)
+            .observe(this) { workInfos ->
+                val active = workInfos.filter {
+                    it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED
                 }
-                MotionEvent.ACTION_UP -> {
-                    val withinBounds = event.x >= 0 && event.x <= v.width &&
-                                       event.y >= 0 && event.y <= v.height
-                    if (withinBounds) {
-                        v.performClick()
-                        onClicked() // setChipActive() inside handles the snap-lock spring
-                    } else {
-                        ChipInteraction.onChipCancelled(v) // neutral spring-back
+                val anyFailed = workInfos.any { it.state == WorkInfo.State.FAILED }
+
+                when {
+                    active.isNotEmpty() -> {
+                        uploadChipHandler.removeCallbacks(uploadChipHideRunnable)
+                        wasUploadActive = true
+                        showUploadingOverlay()
+                    }
+                    wasUploadActive -> {
+                        wasUploadActive = false
+                        uploadChipHandler.removeCallbacks(uploadChipHideRunnable)
+                        if (anyFailed) {
+                            // Failed — just let countdown resume silently
+                            showUploadCountdown()
+                        } else {
+                            showUploadedOverlay()
+                            // After 3 s resume countdown if still recording, else hide
+                            uploadChipHandler.postDelayed(uploadChipHideRunnable, 3000)
+                        }
                     }
                 }
-                MotionEvent.ACTION_CANCEL -> {
-                    ChipInteraction.onChipCancelled(v)
-                }
             }
-            true
+    }
+
+    /** Blue pulsing dot + "Uploading..." — suppresses countdown updates. */
+    private fun showUploadingOverlay() {
+        isCurrentlyUploading = true
+        stopUploadOverlayDotBreathing()
+        vUploadOverlayDot.setBackgroundResource(R.drawable.dot_blue)
+        vUploadOverlayDot.visibility = View.VISIBLE
+        tvUploadOverlayStatus.text = "Uploading..."
+        uploadOverlayPill.animate()
+            .alpha(1f).setDuration(AnimationUtils.DURATION_ELEMENT)
+            .setInterpolator(DecelerateInterpolator()).start()
+        uploadOverlayDotAnimators = AnimationUtils.startBreathing(vUploadOverlayDot, 700L)
+    }
+
+    /** Green dot + "Uploaded" with spring announcement. */
+    private fun showUploadedOverlay() {
+        isCurrentlyUploading = false
+        stopUploadOverlayDotBreathing()
+        vUploadOverlayDot.setBackgroundResource(R.drawable.dot_ready)
+        vUploadOverlayDot.visibility = View.VISIBLE
+        tvUploadOverlayStatus.text = "Uploaded"
+        AnimationUtils.announceScale(uploadOverlayPill, peakScale = 1.05f)
+        uploadOverlayPill.animate()
+            .alpha(1f).setDuration(AnimationUtils.DURATION_MICRO)
+            .setInterpolator(DecelerateInterpolator()).start()
+    }
+
+    /** Resume "upload in MM:SS" countdown — called after Uploaded display expires. */
+    private fun showUploadCountdown() {
+        isCurrentlyUploading = false
+        stopUploadOverlayDotBreathing()
+        vUploadOverlayDot.visibility = View.GONE
+        // Text will be refreshed on the next timerRunnable tick (≤1 s)
+        if (isRecording) {
+            uploadOverlayPill.animate()
+                .alpha(1f).setDuration(AnimationUtils.DURATION_ELEMENT)
+                .setInterpolator(DecelerateInterpolator()).start()
         }
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    // Status dot breathing animation
-    // ══════════════════════════════════════════════════════════════════════════
-
     /**
-     * NEW: Both IDLE and REC states breathe — with distinct cadences.
-     *   IDLE → 1400ms: "watching quietly," very slow, communicates calm readiness
-     *   REC  →  900ms: "actively recording," slightly elevated, distinct from idle
-     *
-     * Previously only REC state breathed. IDLE was static — missed the ambient
-     * motion principle ("Secondary Action reinforces primary state without competing").
-     *
-     * The breathing restarts when switching states so the new cadence takes effect
-     * immediately rather than waiting for the old cycle to complete.
+     * Hides the upload pill — called 3 s after "Uploaded".
+     * If still recording, transitions back to countdown; otherwise fades out.
      */
-    private fun startStatusDotBreathing(durationMs: Long) {
-        // Always restart — state changed, new cadence must apply immediately
-        stopStatusDotBreathing()
-        statusDotAnimators = AnimationUtils.startBreathing(vStatusDot, durationMs)
+    private fun hideUploadOverlay() {
+        if (isRecording) {
+            showUploadCountdown()
+        } else {
+            stopUploadOverlayDotBreathing()
+            uploadOverlayPill.animate()
+                .alpha(0f).setDuration(AnimationUtils.DURATION_COMPONENT)
+                .setInterpolator(DecelerateInterpolator()).start()
+        }
     }
 
-    private fun stopStatusDotBreathing() {
-        statusDotAnimators?.forEach { it.cancel() }
-        statusDotAnimators = null
-        vStatusDot.alpha  = 1.0f
-        vStatusDot.scaleX = 1.0f
-        vStatusDot.scaleY = 1.0f
+    private fun stopUploadOverlayDotBreathing() {
+        uploadOverlayDotAnimators?.forEach { it.cancel() }
+        uploadOverlayDotAnimators = null
+        vUploadOverlayDot.alpha  = 1f
+        vUploadOverlayDot.scaleX = 1f
+        vUploadOverlayDot.scaleY = 1f
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -833,7 +743,9 @@ class MainActivity : AppCompatActivity() {
                 override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
                     openCamera(manager, cameraId)
                 }
-                override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {}
+                override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
+                    configurePreviewTransform()
+                }
                 override fun onSurfaceTextureDestroyed(st: SurfaceTexture) = true
                 override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
             }
@@ -870,10 +782,62 @@ class MainActivity : AppCompatActivity() {
                                 Range(selectedFps, selectedFps))
                         }.build()
                     session.setRepeatingRequest(request, null, cameraHandler)
-                    runOnUiThread { applyAspectRatioToPreview() }
+                    runOnUiThread { configurePreviewTransform() }
                 }
                 override fun onConfigureFailed(session: CameraCaptureSession) {}
             }, cameraHandler)
+    }
+
+    /**
+     * Corrects the TextureView transform so the camera preview appears upright.
+     *
+     * The camera sensor has a fixed physical orientation (SENSOR_ORIENTATION, typically
+     * 90° for back cameras). The device can be held at ROTATION_0/90/180/270.
+     * We need to rotate the TextureView contents so the visual result is always correct.
+     *
+     * Formula from Android Camera2Basic sample:
+     *   totalRotation = 90 * (deviceRotation - 2)  [for ROTATION_90 and ROTATION_270]
+     * Combined with a scale step to fill the view after rotation.
+     *
+     * Also called from onSurfaceTextureSizeChanged so rotation is re-applied after
+     * any display size change (e.g. split-screen, foldable).
+     */
+    @Suppress("DEPRECATION")
+    private fun configurePreviewTransform() {
+        val viewW = textureView.width.toFloat()
+        val viewH = textureView.height.toFloat()
+        if (viewW == 0f || viewH == 0f) return
+
+        val rotation = windowManager.defaultDisplay.rotation
+        val matrix   = android.graphics.Matrix()
+        val cx = viewW / 2f
+        val cy = viewH / 2f
+
+        when (rotation) {
+            Surface.ROTATION_90, Surface.ROTATION_270 -> {
+                // Buffer rect uses the SWAPPED dimensions because the sensor output
+                // is in landscape but Camera2 reports it in portrait coordinates.
+                val bufferRect = android.graphics.RectF(
+                    0f, 0f, selectedHeight.toFloat(), selectedWidth.toFloat()
+                )
+                bufferRect.offset(cx - bufferRect.centerX(), cy - bufferRect.centerY())
+                matrix.setRectToRect(
+                    android.graphics.RectF(0f, 0f, viewW, viewH),
+                    bufferRect,
+                    android.graphics.Matrix.ScaleToFit.FILL
+                )
+                val scale = maxOf(viewH / selectedHeight, viewW / selectedWidth)
+                matrix.postScale(scale, scale, cx, cy)
+                // ROTATION_90=1 → -90°   ROTATION_270=3 → +90°
+                matrix.postRotate((90f * (rotation - 2)), cx, cy)
+            }
+            Surface.ROTATION_180 -> {
+                matrix.postRotate(180f, cx, cy)
+            }
+            // ROTATION_0: sensor and display are already aligned — no transform needed
+        }
+
+        textureView.setTransform(matrix)
     }
 
     private fun closePreviewCamera(onClosed: () -> Unit) {
@@ -881,46 +845,6 @@ class MainActivity : AppCompatActivity() {
         cameraDevice?.close();   cameraDevice   = null
         if (::cameraThread.isInitialized) cameraThread.quitSafely()
         onClosed()
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // Preview transform
-    // ══════════════════════════════════════════════════════════════════════════
-
-    private fun applyAspectRatioToPreview() {
-        val manager = getSystemService(CAMERA_SERVICE) as CameraManager
-        val cameraId = manager.cameraIdList.firstOrNull { id ->
-            manager.getCameraCharacteristics(id)
-                .get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
-        } ?: return
-
-        val sensorOrientation = manager.getCameraCharacteristics(cameraId)
-            .get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
-
-        val viewW = textureView.width.toFloat()
-        val viewH = textureView.height.toFloat()
-        if (viewW == 0f || viewH == 0f) return
-
-        val targetAspect = aspectRatioW / aspectRatioH
-        val matrix = android.graphics.Matrix()
-        val cx = viewW / 2f
-        val cy = viewH / 2f
-
-        val rotate = when (sensorOrientation) {
-            90  -> -90f
-            270 ->  90f
-            180 -> 180f
-            else ->  0f
-        }
-
-        if (sensorOrientation == 90 || sensorOrientation == 270) {
-            val scaleX = 1f / targetAspect
-            val scaleY = viewW / viewH
-            matrix.postScale(scaleX, scaleY, cx, cy)
-        }
-
-        matrix.postRotate(rotate, cx, cy)
-        textureView.setTransform(matrix)
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -949,7 +873,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // Activity lifecycle
+    // Lifecycle
     // ══════════════════════════════════════════════════════════════════════════
 
     override fun onResume() {
@@ -957,21 +881,18 @@ class MainActivity : AppCompatActivity() {
         val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         isRecording = prefs.getBoolean("recording_active", false)
 
-        // Restore the recording start time so the elapsed timer shows the correct
-        // duration after the user backgrounds and returns (e.g. during a long recording).
-        // Falls back to now if not found, which means timer restarts from 0 — acceptable.
         if (isRecording) {
+            // Restore start time for elapsed timer continuity across backgrounding
             recordingStartMs = prefs.getLong("recording_start_ms", SystemClock.elapsedRealtime())
         }
 
-        // setRecordingUI() syncs button color, text, dot, breathing, controls, and timer.
         setRecordingUI(isRecording)
         if (!isRecording && hasPermissions()) openPreviewCamera()
     }
 
     override fun onPause() {
         super.onPause()
-        stopElapsedTimer()   // no point ticking when invisible; onResume restores it
+        stopElapsedTimer()
         if (!isRecording) closePreviewCamera {}
     }
 }

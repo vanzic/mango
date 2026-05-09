@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Blue indicator dot — used for active upload state in the overlay pill.    -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#0A84FF" />
+    <size android:width="6dp" android:height="6dp" />
+</shape>

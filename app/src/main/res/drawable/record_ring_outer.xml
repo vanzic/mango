@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Static outer ring for the circular record button.                        -->
+<!-- 30% white stroke — subtle guide ring, not a heavy border.                -->
+<!-- The inner button animates independently inside this ring.                -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <stroke android:width="2dp" android:color="#4DFFFFFF" />
+    <size android:width="80dp" android:height="80dp" />
+</shape>

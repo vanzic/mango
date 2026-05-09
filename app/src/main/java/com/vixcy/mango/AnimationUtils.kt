@@ -148,11 +148,15 @@ object AnimationUtils {
         startValue: Int,
         endValue: Int,
         prefix: String = "",
-        suffix: String = ""
+        suffix: String = "",
+        formatValue: ((Int) -> String)? = null
     ): ValueAnimator = ValueAnimator.ofInt(startValue, endValue).apply {
-        duration = 480L // 400–600ms per design rule
+        duration = 480L
         interpolator = DecelerateInterpolator()
-        addUpdateListener { view.text = "$prefix${it.animatedValue}$suffix" }
+        addUpdateListener {
+            val v = it.animatedValue as Int
+            view.text = formatValue?.invoke(v) ?: "$prefix$v$suffix"
+        }
         start()
     }
 
