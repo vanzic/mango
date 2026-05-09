@@ -55,8 +55,19 @@ object ChipInteraction {
             isEnabled = true
             alpha = 1.0f
         }
-        // No release animation here — inactive chips are already at scale 1.0.
-        // Firing a spring on a view with no displacement wastes allocations.
+        // Spatial depth: inactive chips step back very slightly (0.96).
+        // The active chip springs to 1.0 from pressed (0.93), so it visually
+        // "comes forward" while siblings "recede." Creates a 3D mental model
+        // without explicit z-ordering — users subconsciously read the layout
+        // as having depth. Damping=0.85 keeps it subtle, not distracting.
+        SpringAnimation(chip, DynamicAnimation.SCALE_X, 0.96f).apply {
+            spring.stiffness = AnimationUtils.SPRING_STIFFNESS_SECONDARY
+            spring.dampingRatio = 0.85f
+        }.start()
+        SpringAnimation(chip, DynamicAnimation.SCALE_Y, 0.96f).apply {
+            spring.stiffness = AnimationUtils.SPRING_STIFFNESS_SECONDARY
+            spring.dampingRatio = 0.85f
+        }.start()
     }
 
     // ── Disabled state ─────────────────────────────────────────────────────────

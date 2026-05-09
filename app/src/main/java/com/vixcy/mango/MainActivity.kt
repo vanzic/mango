@@ -12,6 +12,8 @@ import android.graphics.SurfaceTexture
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Range
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -20,6 +22,7 @@ import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
+import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -31,12 +34,18 @@ class MainActivity : AppCompatActivity() {
 
     // ── UI ─────────────────────────────────────────────────────────────────────
     private lateinit var textureView: TextureView
+    private lateinit var statusChip: LinearLayout
     private lateinit var vStatusDot: View
     private lateinit var tvStatus: TextView
     private lateinit var tvDurationValue: TextView
     private lateinit var tvFileSizeEstimate: TextView
     private lateinit var seekDuration: SeekBar
     private lateinit var btnToggleRecording: TextView
+    // Section labels — pulsed on every selection change ("system heard you")
+    private lateinit var tvLabelQuality: TextView
+    private lateinit var tvLabelFrameRate: TextView
+    private lateinit var tvLabelAspectRatio: TextView
+    private lateinit var tvLabelDuration: TextView
     private lateinit var chip720p: TextView
     private lateinit var chip1080p: TextView
     private lateinit var chip4k: TextView
@@ -46,6 +55,24 @@ class MainActivity : AppCompatActivity() {
     private lateinit var chipAspect16_9: TextView
     private lateinit var chipAspect4_3: TextView
     private lateinit var chipAspect1_1: TextView
+
+    // ── Elapsed recording timer ────────────────────────────────────────────────
+    // Drives the "REC • 00:03:42" live readout in the status chip.
+    // Psychology: a ticking timer is the strongest possible proof that the system
+    // is alive and working. It answers "is it recording?" without any UI chrome.
+    private val timerHandler = Handler(Looper.getMainLooper())
+    private var recordingStartMs = 0L   // SystemClock.elapsedRealtime() at start
+    private val timerRunnable = object : Runnable {
+        override fun run() {
+            val elapsed = SystemClock.elapsedRealtime() - recordingStartMs
+            val s = (elapsed / 1000).toInt()
+            val h = s / 3600; val m = (s % 3600) / 60; val sec = s % 60
+            // Monospace font prevents digit-width jitter as numbers change
+            tvStatus.text = if (h > 0) "REC • %02d:%02d:%02d".format(h, m, sec)
+                            else        "REC • %02d:%02d".format(m, sec)
+            timerHandler.postDelayed(this, 1000)
+        }
+    }
 
     // ── Camera ─────────────────────────────────────────────────────────────────
     private var cameraDevice: CameraDevice? = null
@@ -147,12 +174,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun bindViews() {
         textureView        = findViewById(R.id.textureView)
+        statusChip         = findViewById(R.id.statusChip)
         vStatusDot         = findViewById(R.id.vStatusDot)
         tvStatus           = findViewById(R.id.tvStatus)
         tvDurationValue    = findViewById(R.id.tvDurationValue)
         tvFileSizeEstimate = findViewById(R.id.tvFileSizeEstimate)
         seekDuration       = findViewById(R.id.seekDuration)
         btnToggleRecording = findViewById(R.id.btnToggleRecording)
+        tvLabelQuality     = findViewById(R.id.tvLabelQuality)
+        tvLabelFrameRate   = findViewById(R.id.tvLabelFrameRate)
+        tvLabelAspectRatio = findViewById(R.id.tvLabelAspectRatio)
+        tvLabelDuration    = findViewById(R.id.tvLabelDuration)
         chip720p           = findViewById(R.id.chip720p)
         chip1080p          = findViewById(R.id.chip1080p)
         chip4k             = findViewById(R.id.chip4k)
@@ -203,6 +235,7 @@ class MainActivity : AppCompatActivity() {
         computeAndUpdateDimensions()
         listOf(chip720p, chip1080p, chip4k).forEach { setChipInactive(it) }
         setChipActive(chip)
+        AnimationUtils.pulseLabel(tvLabelQuality)  // "I see you changed quality"
         updateSliderMax()
         updateFileSizeEstimate()
         if (!isRecording) closePreviewCamera { openPreviewCamera() }
@@ -231,6 +264,7 @@ class MainActivity : AppCompatActivity() {
         selectedFps = fps
         listOf(chip24fps, chip30fps, chip60fps).forEach { setChipInactive(it) }
         setChipActive(chip)
+        AnimationUtils.pulseLabel(tvLabelFrameRate)
         updateFileSizeEstimate()
         if (!isRecording) closePreviewCamera { openPreviewCamera() }
     }
@@ -267,6 +301,7 @@ class MainActivity : AppCompatActivity() {
         computeAndUpdateDimensions()    // update selectedWidth/Height for recording
         listOf(chipAspect16_9, chipAspect4_3, chipAspect1_1).forEach { setChipInactive(it) }
         setChipActive(chip)
+        AnimationUtils.pulseLabel(tvLabelAspectRatio)
         applyAspectRatioToPreview()
     }
 
@@ -308,7 +343,10 @@ class MainActivity : AppCompatActivity() {
                 if (mins == selectedDurationMin) return
                 selectedDurationMin = mins
                 tvDurationValue.text = "$mins min"
-                if (fromUser) updateFileSizeEstimate()
+                if (fromUser) {
+                    updateFileSizeEstimate()
+                    AnimationUtils.pulseLabel(tvLabelDuration)
+                }
                 // No per-tick haptic: haptic budget ≤4 per flow. Start/stop cover it.
             }
             override fun onStartTrackingTouch(sb: SeekBar) {
@@ -401,6 +439,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun startRecording() {
         closePreviewCamera {
+            // Persist the start timestamp so onResume() can reconstruct the elapsed
+            // timer correctly after the user backgrounds and returns to the app.
+            recordingStartMs = SystemClock.elapsedRealtime()
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putLong("recording_start_ms", recordingStartMs)
+                .apply()
+
             val intent = Intent(this, RecordingService::class.java).apply {
                 action = RecordingService.ACTION_START
                 putExtra("width",    selectedWidth)
@@ -454,10 +499,25 @@ class MainActivity : AppCompatActivity() {
                 to   = getColor(R.color.mango_active)   // red
             )
             vStatusDot.setBackgroundResource(R.drawable.dot_recording)
-            crossfadeText(tvStatus, "REC")
+            // Don't crossfade status to "REC" — the timer owns that slot.
+            // Set it directly so timer can begin updating it immediately.
+            tvStatus.text = "REC"
             startStatusDotBreathing(BREATHING_REC_MS)  // 900ms — elevated cadence
+
+            // Status chip announces the state change with a spatial jolt.
+            // The spring-bounce reads as "something just happened here" —
+            // confirms the user's action without a modal or toast.
+            AnimationUtils.announceScale(statusChip, peakScale = 1.06f)
+
+            // Start elapsed timer — the single most powerful "validating" signal.
+            // A ticking clock proves the system is alive, understood the command,
+            // and is actively working. Users stop second-guessing when they see time moving.
+            startElapsedTimer()
             setControlsEnabled(false)
         } else {
+            // Stop timer before crossfade so "REC • 00:03:42" doesn't linger
+            stopElapsedTimer()
+
             crossfadeText(btnToggleRecording, "Start Recording")
             animateButtonColor(
                 from = getColor(R.color.mango_active),  // red
@@ -466,8 +526,24 @@ class MainActivity : AppCompatActivity() {
             vStatusDot.setBackgroundResource(R.drawable.dot_ready)
             crossfadeText(tvStatus, "IDLE")
             startStatusDotBreathing(BREATHING_IDLE_MS) // 1400ms — calm, watching
+
+            // Announce the stop too — confirms the user that recording ended
+            AnimationUtils.announceScale(statusChip, peakScale = 1.04f)
             setControlsEnabled(true)
         }
+    }
+
+    // ── Elapsed recording timer ────────────────────────────────────────────────
+
+    private fun startElapsedTimer() {
+        timerHandler.removeCallbacks(timerRunnable)
+        // Post at 500ms — allows the initial "REC" text to read for a beat
+        // before the timer starts ticking, so the transition has a rhythm
+        timerHandler.postDelayed(timerRunnable, 500)
+    }
+
+    private fun stopElapsedTimer() {
+        timerHandler.removeCallbacks(timerRunnable)
     }
 
     /**
@@ -737,15 +813,22 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         isRecording = prefs.getBoolean("recording_active", false)
-        // setRecordingUI() syncs button color, text, dot, breathing, and controls.
-        // The btnRecordDrawable starts at mango_accent, so the 'from' color for
-        // color animation is accent; setRecordingUI will animate to active if recording.
+
+        // Restore the recording start time so the elapsed timer shows the correct
+        // duration after the user backgrounds and returns (e.g. during a long recording).
+        // Falls back to now if not found, which means timer restarts from 0 — acceptable.
+        if (isRecording) {
+            recordingStartMs = prefs.getLong("recording_start_ms", SystemClock.elapsedRealtime())
+        }
+
+        // setRecordingUI() syncs button color, text, dot, breathing, controls, and timer.
         setRecordingUI(isRecording)
         if (!isRecording && hasPermissions()) openPreviewCamera()
     }
 
     override fun onPause() {
         super.onPause()
+        stopElapsedTimer()   // no point ticking when invisible; onResume restores it
         if (!isRecording) closePreviewCamera {}
     }
 }

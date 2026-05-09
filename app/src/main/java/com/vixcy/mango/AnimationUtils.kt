@@ -206,6 +206,48 @@ object AnimationUtils {
             .start()
     }
 
+    // ── Section label acknowledgement pulse ────────────────────────────────────
+    // "The system understood you." — when a control section changes, its label
+    // briefly brightens from dim (0.6) to full (1.0) then fades back.
+    //
+    // Psychology: the label becoming visible for a moment reads as "this area just
+    // responded." The user doesn't think about it consciously — they just feel heard.
+    //
+    // Timing: fast rise (INSTANT = 80ms) so it feels synchronous with the tap,
+    // slow fade (COMPONENT = 360ms) so it lingers just long enough to register.
+    fun pulseLabel(view: View, baseDimAlpha: Float = 0.6f) {
+        view.animate().cancel()
+        view.animate()
+            .alpha(1.0f)
+            .setDuration(DURATION_INSTANT)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction {
+                view.animate()
+                    .alpha(baseDimAlpha)
+                    .setDuration(DURATION_COMPONENT)
+                    .setInterpolator(DecelerateInterpolator())
+                    .start()
+            }.start()
+    }
+
+    // ── Spring scale announcement ──────────────────────────────────────────────
+    // One-shot spring jolt to announce a state change on an element that's already
+    // at rest. Snaps to peakScale (overshoot), then springs back to 1.0.
+    // Used on the status chip when recording starts/stops — communicates "something
+    // just changed here" without a modal or toast.
+    fun announceScale(view: View, peakScale: Float = 1.08f) {
+        view.scaleX = peakScale
+        view.scaleY = peakScale
+        SpringAnimation(view, DynamicAnimation.SCALE_X, 1.0f).apply {
+            spring.stiffness = SPRING_STIFFNESS_SECONDARY
+            spring.dampingRatio = 0.50f   // bouncy — the "announcement" needs to be felt
+        }.start()
+        SpringAnimation(view, DynamicAnimation.SCALE_Y, 1.0f).apply {
+            spring.stiffness = SPRING_STIFFNESS_SECONDARY
+            spring.dampingRatio = 0.50f
+        }.start()
+    }
+
     // ── Haptic feedback ────────────────────────────────────────────────────────
     // Rule: haptic fires at visual peak, not before/after.
     //       Budget: ≤4 haptic events per user flow.
