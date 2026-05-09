@@ -282,6 +282,7 @@ class RecordingService : Service() {
             .build()
         val request = OneTimeWorkRequestBuilder<UploadWorker>()
             .setInputData(data)
+            .addTag(UploadWorker.UPLOAD_TAG)   // observed by MainActivity upload chip
             .build()
         WorkManager.getInstance(this).enqueue(request)
     }

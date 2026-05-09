@@ -345,6 +345,45 @@
         </com.vixcy.mango.MangoScrollView>
 
         <!--
+            UPLOAD STATUS CHIP — fixed between scroll and record button, always visible.
+            alpha=0 at rest; animated in when uploading, out after uploaded confirmation.
+            Background and dot color driven programmatically (same pattern as statusChip).
+        -->
+        <LinearLayout
+            android:id="@+id/uploadStatusChip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/status_chip_bg"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:paddingTop="7dp"
+            android:paddingBottom="7dp"
+            android:layout_marginBottom="10dp"
+            android:alpha="0">
+
+            <View
+                android:id="@+id/vUploadDot"
+                android:layout_width="6dp"
+                android:layout_height="6dp"
+                android:background="@drawable/dot_uploading"
+                android:layout_marginEnd="7dp" />
+
+            <TextView
+                android:id="@+id/tvUploadStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="UPLOADING"
+                android:textColor="@color/mango_text_primary"
+                android:textSize="10sp"
+                android:letterSpacing="0.12"
+                android:fontFamily="monospace" />
+
+        </LinearLayout>
+
+        <!--
             RECORDING BUTTON — fixed outside ScrollView, always reachable.
             Background is set programmatically as a GradientDrawable so the
             color can animate smoothly (ValueAnimator.ofArgb) instead of snapping.

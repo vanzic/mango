@@ -29,6 +29,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.dynamicanimation.animation.DynamicAnimation
 import androidx.dynamicanimation.animation.SpringAnimation
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 
 class MainActivity : AppCompatActivity() {
 
@@ -55,6 +57,18 @@ class MainActivity : AppCompatActivity() {
     private lateinit var chipAspect16_9: TextView
     private lateinit var chipAspect4_3: TextView
     private lateinit var chipAspect1_1: TextView
+
+    // ── Upload status chip ─────────────────────────────────────────────────────
+    private lateinit var uploadStatusChip: LinearLayout
+    private lateinit var vUploadDot: View
+    private lateinit var tvUploadStatus: TextView
+    // Breathing animators for the upload dot — stored so we can cancel on completion
+    private var uploadDotAnimators: List<Animator>? = null
+    // Tracks whether we were uploading so we can detect the "just finished" transition
+    private var wasUploadActive = false
+    // Delays the chip fade-out after "UPLOADED ✓" so the user can read it
+    private val uploadChipHandler = Handler(Looper.getMainLooper())
+    private val uploadChipHideRunnable = Runnable { hideUploadChip() }
 
     // ── Elapsed recording timer ────────────────────────────────────────────────
     // Drives the "REC • 00:03:42" live readout in the status chip.
@@ -143,6 +157,7 @@ class MainActivity : AppCompatActivity() {
         setupAspectRatioChips()
         setupDurationSlider()
         setupToggleButton()
+        observeUploadState()
 
         // BUG FIX #1: Compute initial file size immediately (no animation on first render).
         // Previously: selectQuality/selectFps guards returned early because defaults matched,
@@ -181,6 +196,9 @@ class MainActivity : AppCompatActivity() {
         tvFileSizeEstimate = findViewById(R.id.tvFileSizeEstimate)
         seekDuration       = findViewById(R.id.seekDuration)
         btnToggleRecording = findViewById(R.id.btnToggleRecording)
+        uploadStatusChip   = findViewById(R.id.uploadStatusChip)
+        vUploadDot         = findViewById(R.id.vUploadDot)
+        tvUploadStatus     = findViewById(R.id.tvUploadStatus)
         tvLabelQuality     = findViewById(R.id.tvLabelQuality)
         tvLabelFrameRate   = findViewById(R.id.tvLabelFrameRate)
         tvLabelAspectRatio = findViewById(R.id.tvLabelAspectRatio)
@@ -546,8 +564,133 @@ class MainActivity : AppCompatActivity() {
         timerHandler.removeCallbacks(timerRunnable)
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // Upload status chip
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Observes all WorkManager tasks tagged UPLOAD_TAG.
+     *
+     * State machine:
+     *   RUNNING / ENQUEUED  →  show pulsing orange "UPLOADING" chip
+     *   Active → 0 active   →  show "UPLOADED ✓" with scale announcement,
+     *                           then auto-hide after 3 s
+     *   FAILED (any)        →  show "UPLOAD FAILED" briefly then hide
+     *   Idle on cold open   →  chip stays hidden (wasUploadActive guard)
+     *
+     * The wasUploadActive flag prevents a spurious "UPLOADED ✓" flash when the
+     * app reopens and sees old completed work in WorkManager's history.
+     */
+    private fun observeUploadState() {
+        WorkManager.getInstance(this)
+            .getWorkInfosByTagLiveData(UploadWorker.UPLOAD_TAG)
+            .observe(this) { workInfos ->
+                val active = workInfos.filter {
+                    it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED
+                }
+                val anyFailed = workInfos.any { it.state == WorkInfo.State.FAILED }
+
+                when {
+                    active.isNotEmpty() -> {
+                        // Cancel any scheduled hide — still uploading
+                        uploadChipHandler.removeCallbacks(uploadChipHideRunnable)
+                        wasUploadActive = true
+                        val count = active.size
+                        showUploadingChip(count)
+                    }
+                    wasUploadActive -> {
+                        // Transitioned from uploading → done
+                        wasUploadActive = false
+                        uploadChipHandler.removeCallbacks(uploadChipHideRunnable)
+                        if (anyFailed) {
+                            showUploadFailedChip()
+                        } else {
+                            showUploadedChip()
+                        }
+                        // Auto-hide after 3 s — long enough to read, short enough not to clutter
+                        uploadChipHandler.postDelayed(uploadChipHideRunnable, 3000)
+                    }
+                    // else: idle on cold open — leave chip hidden, no wasUploadActive set
+                }
+            }
+    }
+
+    /** Pulsing orange "↑ UPLOADING" or "↑ UPLOADING (N)" when N > 1. */
+    private fun showUploadingChip(count: Int) {
+        stopUploadDotBreathing()
+        vUploadDot.setBackgroundResource(R.drawable.dot_uploading)
+        tvUploadStatus.text = if (count > 1) "UPLOADING ($count)" else "UPLOADING"
+        tvUploadStatus.setTextColor(getColor(R.color.mango_text_primary))
+
+        // Reveal chip if currently hidden
+        if (uploadStatusChip.alpha < 0.5f) {
+            uploadStatusChip.animate()
+                .alpha(1f)
+                .setDuration(AnimationUtils.DURATION_ELEMENT)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+        }
+
+        // Dot breathes at 700ms — faster than REC (900ms), signals active network work
+        uploadDotAnimators = AnimationUtils.startBreathing(vUploadDot, durationMs = 700L)
+    }
+
+    /** Green "UPLOADED ✓" with spatial announcement — confirms the work is done. */
+    private fun showUploadedChip() {
+        stopUploadDotBreathing()
+        vUploadDot.setBackgroundResource(R.drawable.dot_ready)          // green
+        tvUploadStatus.text = "UPLOADED ✓"
+        tvUploadStatus.setTextColor(getColor(R.color.mango_dot_ready))  // green text
+
+        // Chip announces itself: snaps slightly larger then springs to 1.0
+        // Same pattern as the status chip state-change ceremony.
+        AnimationUtils.announceScale(uploadStatusChip, peakScale = 1.06f)
+
+        // Ensure visible
+        uploadStatusChip.animate()
+            .alpha(1f)
+            .setDuration(AnimationUtils.DURATION_MICRO)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+    }
+
+    /** Red "UPLOAD FAILED" — honest, quiet, no haptic (not user's fault). */
+    private fun showUploadFailedChip() {
+        stopUploadDotBreathing()
+        vUploadDot.setBackgroundResource(R.drawable.dot_recording)     // red
+        tvUploadStatus.text = "UPLOAD FAILED"
+        tvUploadStatus.setTextColor(getColor(R.color.mango_active))    // red text
+
+        uploadStatusChip.animate()
+            .alpha(1f)
+            .setDuration(AnimationUtils.DURATION_MICRO)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+    }
+
+    /** Fades the chip out smoothly — called 3s after upload completes. */
+    private fun hideUploadChip() {
+        stopUploadDotBreathing()
+        uploadStatusChip.animate()
+            .alpha(0f)
+            .setDuration(AnimationUtils.DURATION_COMPONENT)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+    }
+
+    private fun stopUploadDotBreathing() {
+        uploadDotAnimators?.forEach { it.cancel() }
+        uploadDotAnimators = null
+        vUploadDot.alpha  = 1f
+        vUploadDot.scaleX = 1f
+        vUploadDot.scaleY = 1f
+    }
+
     /**
      * Animates button background color between states.
+     * NEW: replaces the previous setBackgroundResource() snap.
+     * Uses ArgbEvaluator on the GradientDrawable fill — keeps corner radius
+     * and avoids triggering a layout pass.
      * NEW: replaces the previous setBackgroundResource() snap.
      * Uses ArgbEvaluator on the GradientDrawable fill — keeps corner radius
      * and avoids triggering a layout pass.

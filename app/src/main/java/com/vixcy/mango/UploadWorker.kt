@@ -13,6 +13,10 @@ class UploadWorker(
 
     companion object {
         private const val TAG = "UploadWorker"
+        // Work tag observed by MainActivity to drive the upload status chip.
+        // Every upload request (initial + retries) carries this tag so the UI
+        // can aggregate all in-flight uploads into a single indicator.
+        const val UPLOAD_TAG = "mango_upload"
     }
 
     override suspend fun doWork(): Result {
