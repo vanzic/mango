@@ -1,22 +1,29 @@
 package com.vixcy.mango
 
 import android.Manifest
+import android.animation.ObjectAnimator
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.*
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
+import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
 import android.widget.SeekBar
 import android.widget.TextView
+import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import androidx.dynamicanimation.animation.DynamicAnimation
+import androidx.dynamicanimation.animation.SpringAnimation
 
 class MainActivity : AppCompatActivity() {
 
@@ -103,12 +110,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupQualityChips() {
         selectQuality(chip720p, 1280, 720, 2_000_000)
-        chip720p.setOnClickListener  { selectQuality(chip720p,  1280, 720,  2_000_000) }
-        chip1080p.setOnClickListener { selectQuality(chip1080p, 1920, 1080, 8_000_000) }
-        chip4k.setOnClickListener    { selectQuality(chip4k,    3840, 2160, 40_000_000) }
+        addChipTouchFeedback(chip720p)  { selectQuality(chip720p,  1280, 720,  2_000_000) }
+        addChipTouchFeedback(chip1080p) { selectQuality(chip1080p, 1920, 1080, 8_000_000) }
+        addChipTouchFeedback(chip4k)    { selectQuality(chip4k,    3840, 2160, 40_000_000) }
     }
 
     private fun selectQuality(chip: TextView, w: Int, h: Int, bitrate: Int) {
+        if (selectedWidth == w && selectedHeight == h && selectedBitrate == bitrate) return
         selectedWidth   = w
         selectedHeight  = h
         selectedBitrate = bitrate
@@ -123,12 +131,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupFpsChips() {
         selectFps(chip30fps, 30)
-        chip24fps.setOnClickListener { selectFps(chip24fps, 24) }
-        chip30fps.setOnClickListener { selectFps(chip30fps, 30) }
-        chip60fps.setOnClickListener { selectFps(chip60fps, 60) }
+        addChipTouchFeedback(chip24fps) { selectFps(chip24fps, 24) }
+        addChipTouchFeedback(chip30fps) { selectFps(chip30fps, 30) }
+        addChipTouchFeedback(chip60fps) { selectFps(chip60fps, 60) }
     }
 
     private fun selectFps(chip: TextView, fps: Int) {
+        if (selectedFps == fps) return
         selectedFps = fps
         listOf(chip24fps, chip30fps, chip60fps).forEach { setChipInactive(it) }
         setChipActive(chip)
@@ -140,12 +149,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupAspectRatioChips() {
         selectAspectRatio(chipAspect16_9, 16f, 9f)
-        chipAspect16_9.setOnClickListener { selectAspectRatio(chipAspect16_9, 16f, 9f) }
-        chipAspect4_3.setOnClickListener  { selectAspectRatio(chipAspect4_3,  4f,  3f) }
-        chipAspect1_1.setOnClickListener  { selectAspectRatio(chipAspect1_1,  1f,  1f) }
+        addChipTouchFeedback(chipAspect16_9) { selectAspectRatio(chipAspect16_9, 16f, 9f) }
+        addChipTouchFeedback(chipAspect4_3)  { selectAspectRatio(chipAspect4_3,  4f,  3f) }
+        addChipTouchFeedback(chipAspect1_1)  { selectAspectRatio(chipAspect1_1,  1f,  1f) }
     }
 
     private fun selectAspectRatio(chip: TextView, w: Float, h: Float) {
+        if (aspectRatioW == w && aspectRatioH == h) return
         aspectRatioW = w
         aspectRatioH = h
         listOf(chipAspect16_9, chipAspect4_3, chipAspect1_1).forEach { setChipInactive(it) }
@@ -155,6 +165,7 @@ class MainActivity : AppCompatActivity() {
 
     // ── Duration Slider ────────────────────────────────────────────────────────
 
+    @Suppress("InlinedApi")
     private fun setupDurationSlider() {
         seekDuration.progress = 10
         tvDurationValue.text = "10 min"
@@ -164,9 +175,16 @@ class MainActivity : AppCompatActivity() {
                 selectedDurationMin = mins
                 tvDurationValue.text = "$mins min"
                 updateFileSizeEstimate()
+                if (fromUser) {
+                    sb.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                }
             }
-            override fun onStartTrackingTouch(sb: SeekBar) {}
-            override fun onStopTrackingTouch(sb: SeekBar) {}
+            override fun onStartTrackingTouch(sb: SeekBar) {
+                sb.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_PRESS)
+            }
+            override fun onStopTrackingTouch(sb: SeekBar) {
+                sb.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            }
         })
     }
 
@@ -191,9 +209,31 @@ class MainActivity : AppCompatActivity() {
 
     // ── Toggle Button ──────────────────────────────────────────────────────────
 
+    @Suppress("InlinedApi")
     private fun setupToggleButton() {
-        btnToggleRecording.setOnClickListener {
-            if (isRecording) stopRecording() else startRecording()
+        btnToggleRecording.setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_PRESS)
+                    AnimationUtils.animateScalePress(
+                        v,
+                        targetScale = 0.94f,
+                        stiffness = AnimationUtils.SPRING_STIFFNESS_PRIMARY,
+                        damping = AnimationUtils.SPRING_DAMPING_PRIMARY
+                    )
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (isRecording) stopRecording() else startRecording()
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    AnimationUtils.animateScaleRelease(
+                        v,
+                        stiffness = AnimationUtils.SPRING_STIFFNESS_PRIMARY,
+                        damping = AnimationUtils.SPRING_DAMPING_PRIMARY
+                    )
+                }
+            }
+            true
         }
     }
 
@@ -232,18 +272,20 @@ class MainActivity : AppCompatActivity() {
             btnToggleRecording.setBackgroundColor(getColor(R.color.mango_active))
             vStatusDot.setBackgroundColor(getColor(R.color.mango_active))
             tvStatus.text = "REC"
+            startStatusDotBreathing()
             setControlsEnabled(false)
         } else {
             btnToggleRecording.text = "Start Recording"
             btnToggleRecording.setBackgroundColor(getColor(R.color.mango_idle))
             vStatusDot.setBackgroundColor(getColor(R.color.mango_dot_ready))
             tvStatus.text = "IDLE"
+            stopStatusDotBreathing()
             setControlsEnabled(true)
         }
     }
 
     private fun setControlsEnabled(enabled: Boolean) {
-        val alpha = if (enabled) 1.0f else 0.4f
+        val alpha = if (enabled) 1.0f else 0.38f
         listOf(chip720p, chip1080p, chip4k,
             chip24fps, chip30fps, chip60fps,
             chipAspect16_9, chipAspect4_3, chipAspect1_1,
@@ -256,11 +298,60 @@ class MainActivity : AppCompatActivity() {
     private fun setChipActive(chip: TextView) {
         chip.setBackgroundColor(getColor(R.color.mango_accent))
         chip.setTextColor(getColor(R.color.mango_text_primary))
+        AnimationUtils.animateScaleRelease(
+            chip,
+            stiffness = AnimationUtils.SPRING_STIFFNESS_SECONDARY,
+            damping = AnimationUtils.SPRING_DAMPING_SECONDARY
+        )
+        chip.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
     private fun setChipInactive(chip: TextView) {
         chip.setBackgroundColor(getColor(R.color.mango_surface_elevated))
         chip.setTextColor(getColor(R.color.mango_text_secondary))
+    }
+
+    // ── Touch Feedback for Chips ───────────────────────────────────────────────
+
+    @Suppress("InlinedApi")
+    private fun addChipTouchFeedback(chip: TextView, onClicked: () -> Unit) {
+        chip.setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_PRESS)
+                    AnimationUtils.animateScalePress(
+                        v,
+                        targetScale = 0.93f,
+                        stiffness = AnimationUtils.SPRING_STIFFNESS_SECONDARY,
+                        damping = AnimationUtils.SPRING_DAMPING_SECONDARY
+                    )
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    onClicked()
+                }
+            }
+            true
+        }
+    }
+
+    // ── Status Dot Breathing Animation ─────────────────────────────────────────
+
+    private var statusDotAnimator: ObjectAnimator? = null
+
+    private fun startStatusDotBreathing() {
+        if (statusDotAnimator != null) return
+        statusDotAnimator = ObjectAnimator.ofFloat(vStatusDot, "alpha", 0.5f, 1.0f).apply {
+            duration = 1200  // 1200ms ≈ slow breathing
+            repeatMode = ObjectAnimator.REVERSE
+            repeatCount = ObjectAnimator.INFINITE
+            start()
+        }
+    }
+
+    private fun stopStatusDotBreathing() {
+        statusDotAnimator?.cancel()
+        statusDotAnimator = null
+        vStatusDot.alpha = 1.0f
     }
 
     // ── Camera Preview ─────────────────────────────────────────────────────────

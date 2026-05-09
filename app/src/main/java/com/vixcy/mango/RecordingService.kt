@@ -93,6 +93,7 @@ class RecordingService : Service() {
         startForeground(NOTIF_ID, notif)
     }
 
+    @Suppress("MissingPermission")
     private fun updateNotification(text: String) {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         val notif = NotificationCompat.Builder(this, CHANNEL)
@@ -157,6 +158,7 @@ class RecordingService : Service() {
         }, cameraHandler)
     }
 
+    @Suppress("NewApi")
     private fun startNewChunk(uploadPrevious: Boolean) {
         if (uploadPrevious) {
             currentFile?.let { enqueueUpload(it) }

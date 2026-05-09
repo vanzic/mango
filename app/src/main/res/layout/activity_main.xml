@@ -20,11 +20,12 @@
         android:layout_height="match_parent"
         android:layout_weight="45"
         android:background="@color/mango_surface"
-        android:paddingStart="20dp"
-        android:paddingEnd="20dp"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
         android:paddingTop="24dp"
         android:paddingBottom="24dp"
-        android:clipToPadding="false">
+        android:clipToPadding="false"
+        android:scrollbars="none">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -32,7 +33,7 @@
             android:orientation="vertical"
             android:gravity="center_horizontal">
 
-            <!-- STATUS CHIP -->
+            <!-- STATUS CHIP: breathing indicator for live/active state -->
             <LinearLayout
                 android:id="@+id/statusChip"
                 android:layout_width="wrap_content"
@@ -40,16 +41,16 @@
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
                 android:background="@color/mango_surface_elevated"
-                android:paddingStart="14dp"
-                android:paddingEnd="14dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
                 android:paddingTop="8dp"
                 android:paddingBottom="8dp"
-                android:layout_marginBottom="28dp">
+                android:layout_marginBottom="32dp">
 
                 <View
                     android:id="@+id/vStatusDot"
-                    android:layout_width="10dp"
-                    android:layout_height="10dp"
+                    android:layout_width="8dp"
+                    android:layout_height="8dp"
                     android:background="@color/mango_dot_ready"
                     android:layout_marginEnd="8dp" />
 
@@ -59,64 +60,75 @@
                     android:layout_height="wrap_content"
                     android:text="IDLE"
                     android:textColor="@color/mango_text_primary"
-                    android:textSize="13sp"
-                    android:letterSpacing="0.1"
+                    android:textSize="11sp"
+                    android:letterSpacing="0.12"
                     android:fontFamily="monospace" />
 
             </LinearLayout>
 
-            <!-- QUALITY LABEL -->
+            <!-- QUALITY LABEL: tertiary text hierarchy -->
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="QUALITY"
-                android:textColor="@color/mango_text_secondary"
-                android:textSize="11sp"
-                android:letterSpacing="0.15"
-                android:layout_marginBottom="10dp" />
+                android:textColor="@color/mango_text_tertiary"
+                android:textSize="10sp"
+                android:letterSpacing="0.12"
+                android:layout_marginBottom="12dp"
+                android:alpha="0.65" />
 
-            <!-- QUALITY SELECTOR -->
+            <!-- QUALITY SELECTOR: 44×44pt minimum tap targets, spring feedback -->
             <LinearLayout
                 android:id="@+id/qualitySelector"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:layout_marginBottom="24dp">
+                android:layout_marginBottom="28dp"
+                android:gravity="center">
 
                 <TextView
                     android:id="@+id/chip720p"
                     android:layout_width="0dp"
-                    android:layout_height="40dp"
+                    android:layout_height="44dp"
                     android:layout_weight="1"
                     android:gravity="center"
                     android:text="720p"
                     android:textColor="@color/mango_text_primary"
-                    android:textSize="13sp"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
                     android:background="@color/mango_accent"
-                    android:layout_marginEnd="4dp" />
+                    android:layout_marginEnd="6dp"
+                    android:clickable="true"
+                    android:focusable="true" />
 
                 <TextView
                     android:id="@+id/chip1080p"
                     android:layout_width="0dp"
-                    android:layout_height="40dp"
+                    android:layout_height="44dp"
                     android:layout_weight="1"
                     android:gravity="center"
                     android:text="1080p"
                     android:textColor="@color/mango_text_secondary"
-                    android:textSize="13sp"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
                     android:background="@color/mango_surface_elevated"
-                    android:layout_marginEnd="4dp" />
+                    android:layout_marginEnd="6dp"
+                    android:clickable="true"
+                    android:focusable="true" />
 
                 <TextView
                     android:id="@+id/chip4k"
                     android:layout_width="0dp"
-                    android:layout_height="40dp"
+                    android:layout_height="44dp"
                     android:layout_weight="1"
                     android:gravity="center"
                     android:text="4K"
                     android:textColor="@color/mango_text_secondary"
-                    android:textSize="13sp"
-                    android:background="@color/mango_surface_elevated" />
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:background="@color/mango_surface_elevated"
+                    android:clickable="true"
+                    android:focusable="true" />
 
             </LinearLayout>
 
@@ -125,53 +137,64 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="FRAME RATE"
-                android:textColor="@color/mango_text_secondary"
-                android:textSize="11sp"
-                android:letterSpacing="0.15"
-                android:layout_marginBottom="10dp" />
+                android:textColor="@color/mango_text_tertiary"
+                android:textSize="10sp"
+                android:letterSpacing="0.12"
+                android:layout_marginBottom="12dp"
+                android:alpha="0.65" />
 
-            <!-- FPS SELECTOR -->
+            <!-- FPS SELECTOR: 44×44pt tap targets with spring feedback -->
             <LinearLayout
                 android:id="@+id/fpsSelector"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:layout_marginBottom="24dp">
+                android:layout_marginBottom="28dp"
+                android:gravity="center">
 
                 <TextView
                     android:id="@+id/chip24fps"
                     android:layout_width="0dp"
-                    android:layout_height="40dp"
+                    android:layout_height="44dp"
                     android:layout_weight="1"
                     android:gravity="center"
                     android:text="24"
                     android:textColor="@color/mango_text_secondary"
-                    android:textSize="13sp"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
                     android:background="@color/mango_surface_elevated"
-                    android:layout_marginEnd="4dp" />
+                    android:layout_marginEnd="6dp"
+                    android:clickable="true"
+                    android:focusable="true" />
 
                 <TextView
                     android:id="@+id/chip30fps"
                     android:layout_width="0dp"
-                    android:layout_height="40dp"
+                    android:layout_height="44dp"
                     android:layout_weight="1"
                     android:gravity="center"
                     android:text="30"
                     android:textColor="@color/mango_text_primary"
-                    android:textSize="13sp"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
                     android:background="@color/mango_accent"
-                    android:layout_marginEnd="4dp" />
+                    android:layout_marginEnd="6dp"
+                    android:clickable="true"
+                    android:focusable="true" />
 
                 <TextView
                     android:id="@+id/chip60fps"
                     android:layout_width="0dp"
-                    android:layout_height="40dp"
+                    android:layout_height="44dp"
                     android:layout_weight="1"
                     android:gravity="center"
                     android:text="60"
                     android:textColor="@color/mango_text_secondary"
-                    android:textSize="13sp"
-                    android:background="@color/mango_surface_elevated" />
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:background="@color/mango_surface_elevated"
+                    android:clickable="true"
+                    android:focusable="true" />
 
             </LinearLayout>
 
@@ -180,71 +203,83 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="ASPECT RATIO"
-                android:textColor="@color/mango_text_secondary"
-                android:textSize="11sp"
-                android:letterSpacing="0.15"
-                android:layout_marginBottom="10dp" />
+                android:textColor="@color/mango_text_tertiary"
+                android:textSize="10sp"
+                android:letterSpacing="0.12"
+                android:layout_marginBottom="12dp"
+                android:alpha="0.65" />
 
-            <!-- ASPECT RATIO SELECTOR -->
+            <!-- ASPECT RATIO SELECTOR: 44×44pt tap targets with spring feedback -->
             <LinearLayout
                 android:id="@+id/aspectRatioSelector"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:layout_marginBottom="24dp">
+                android:layout_marginBottom="28dp"
+                android:gravity="center">
 
                 <TextView
                     android:id="@+id/chipAspect16_9"
                     android:layout_width="0dp"
-                    android:layout_height="40dp"
+                    android:layout_height="44dp"
                     android:layout_weight="1"
                     android:gravity="center"
                     android:text="16:9"
                     android:textColor="@color/mango_text_primary"
                     android:textSize="12sp"
+                    android:textStyle="bold"
                     android:background="@color/mango_accent"
-                    android:layout_marginEnd="4dp" />
+                    android:layout_marginEnd="6dp"
+                    android:clickable="true"
+                    android:focusable="true" />
 
                 <TextView
                     android:id="@+id/chipAspect4_3"
                     android:layout_width="0dp"
-                    android:layout_height="40dp"
+                    android:layout_height="44dp"
                     android:layout_weight="1"
                     android:gravity="center"
                     android:text="4:3"
                     android:textColor="@color/mango_text_secondary"
                     android:textSize="12sp"
+                    android:textStyle="bold"
                     android:background="@color/mango_surface_elevated"
-                    android:layout_marginEnd="4dp" />
+                    android:layout_marginEnd="6dp"
+                    android:clickable="true"
+                    android:focusable="true" />
 
                 <TextView
                     android:id="@+id/chipAspect1_1"
                     android:layout_width="0dp"
-                    android:layout_height="40dp"
+                    android:layout_height="44dp"
                     android:layout_weight="1"
                     android:gravity="center"
                     android:text="1:1"
                     android:textColor="@color/mango_text_secondary"
                     android:textSize="12sp"
-                    android:background="@color/mango_surface_elevated"/>
+                    android:textStyle="bold"
+                    android:background="@color/mango_surface_elevated"
+                    android:clickable="true"
+                    android:focusable="true" />
 
             </LinearLayout>
 
-            <!-- DURATION LABEL -->
+            <!-- DURATION LABEL: tertiary text with accent value -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:layout_marginBottom="10dp">
+                android:layout_marginBottom="12dp">
 
                 <TextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:text="CLIP DURATION"
-                    android:textColor="@color/mango_text_secondary"
-                    android:textSize="11sp"
-                    android:letterSpacing="0.15" />
+                    android:textColor="@color/mango_text_tertiary"
+                    android:textSize="10sp"
+                    android:letterSpacing="0.12"
+                    android:alpha="0.65" />
 
                 <TextView
                     android:id="@+id/tvDurationValue"
@@ -252,31 +287,34 @@
                     android:layout_height="wrap_content"
                     android:text="10 min"
                     android:textColor="@color/mango_accent"
-                    android:textSize="11sp" />
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
 
             </LinearLayout>
 
-            <!-- DURATION SLIDER -->
+            <!-- DURATION SLIDER: improved visual feedback -->
             <SeekBar
                 android:id="@+id/seekDuration"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:max="133"
                 android:progress="10"
-                android:layout_marginBottom="24dp" />
+                android:layout_marginBottom="20dp"
+                android:thumbOffset="0dp" />
 
-            <!-- FILE SIZE ESTIMATE -->
+            <!-- FILE SIZE ESTIMATE: secondary text hierarchy -->
             <TextView
                 android:id="@+id/tvFileSizeEstimate"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="≈ 150 MB / clip"
                 android:textColor="@color/mango_text_secondary"
-                android:textSize="12sp"
+                android:textSize="11sp"
                 android:gravity="center"
-                android:layout_marginBottom="32dp" />
+                android:layout_marginBottom="40dp"
+                android:alpha="0.72" />
 
-            <!-- START/STOP BUTTON -->
+            <!-- START/STOP BUTTON: 44×44pt minimum, spring press/release feedback, haptic -->
             <TextView
                 android:id="@+id/btnToggleRecording"
                 android:layout_width="match_parent"
@@ -285,7 +323,11 @@
                 android:text="Start Recording"
                 android:textColor="@color/mango_text_primary"
                 android:textSize="15sp"
-                android:background="@color/mango_idle" />
+                android:textStyle="bold"
+                android:background="@color/mango_idle"
+                android:clickable="true"
+                android:focusable="true"
+                android:elevation="2dp" />
 
         </LinearLayout>
     </ScrollView>

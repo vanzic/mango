@@ -1,11 +1,22 @@
 <resources>
-    <color name="mango_background">#0A0A0A</color>
-    <color name="mango_surface">#141414</color>
-    <color name="mango_surface_elevated">#1E1E1E</color>
-    <color name="mango_idle">#1A1A1A</color>
-    <color name="mango_active">#FF3B30</color>
-    <color name="mango_dot_ready">#34C759</color>
-    <color name="mango_text_primary">#FFFFFF</color>
-    <color name="mango_text_secondary">#8E8E93</color>
-    <color name="mango_accent">#FF9500</color>
+    <!-- Depth system: brightness delta for z-level elevation in dark mode -->
+    <color name="mango_background">#0A0A0A</color>          <!-- z=0: deepest -->
+    <color name="mango_surface">#141414</color>              <!-- z=1: content layer -->
+    <color name="mango_surface_elevated">#1E1E1E</color>      <!-- z=2: raised cards -->
+    <color name="mango_idle">#1A1A1A</color>                 <!-- button resting state -->
+
+    <!-- Primary semantic colors (iOS-standard values) -->
+    <color name="mango_active">#FF3B30</color>               <!-- Error/active: red -->
+    <color name="mango_accent">#FF9500</color>               <!-- Accent: orange -->
+    <color name="mango_dot_ready">#34C759</color>            <!-- Success: green -->
+    <color name="mango_warning">#FF9F0A</color>              <!-- Warning: amber -->
+
+    <!-- Text hierarchy via value, not just size -->
+    <color name="mango_text_primary">#FFFFFF</color>         <!-- Primary text: full opacity -->
+    <color name="mango_text_secondary">#8E8E93</color>        <!-- Secondary text: ~55% opacity -->
+    <color name="mango_text_tertiary">#5E5E62</color>         <!-- Tertiary text: ~37% opacity -->
+
+    <!-- Transparency variants for opacity hierarchy (used for loading/disabled states) -->
+    <color name="mango_text_primary_disabled">#99FFFFFF</color>     <!-- Primary @ 60% (disabled) -->
+    <color name="mango_text_secondary_disabled">#4D8E8E93</color>   <!-- Secondary @ 30% (hint) -->
 </resources>
