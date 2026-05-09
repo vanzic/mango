@@ -1,25 +1,27 @@
 package com.vixcy.mango
 
 import android.Manifest
-import android.animation.ObjectAnimator
+import android.animation.Animator
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.SurfaceTexture
+import android.graphics.drawable.GradientDrawable
 import android.hardware.camera2.*
-import android.os.Build
+import android.graphics.SurfaceTexture
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
+import android.util.Range
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
 import android.widget.SeekBar
 import android.widget.TextView
-import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.dynamicanimation.animation.DynamicAnimation
@@ -27,7 +29,7 @@ import androidx.dynamicanimation.animation.SpringAnimation
 
 class MainActivity : AppCompatActivity() {
 
-    // UI
+    // ── UI ─────────────────────────────────────────────────────────────────────
     private lateinit var textureView: TextureView
     private lateinit var vStatusDot: View
     private lateinit var tvStatus: TextView
@@ -45,26 +47,56 @@ class MainActivity : AppCompatActivity() {
     private lateinit var chipAspect4_3: TextView
     private lateinit var chipAspect1_1: TextView
 
-    // Camera
+    // ── Camera ─────────────────────────────────────────────────────────────────
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
     private lateinit var cameraThread: HandlerThread
     private lateinit var cameraHandler: Handler
 
-    // State
-    private var isRecording = false
-    private var selectedWidth = 1280
-    private var selectedHeight = 720
-    private var selectedBitrate = 2_000_000
-    private var selectedFps = 30
+    // ── State ──────────────────────────────────────────────────────────────────
+    private var isRecording        = false
+    private var selectedWidth      = 1280
+    private var selectedHeight     = 720
+    private var selectedBitrate    = 2_000_000
+    private var selectedFps        = 30
     private var selectedDurationMin = 10
-    private var aspectRatioW = 16f
-    private var aspectRatioH = 9f
+    private var lastEstimatedSizeMb = -1    // -1 sentinel → force first render
+    private var aspectRatioW       = 16f
+    private var aspectRatioH       = 9f
+    private var hasAnimatedFirstAppearance = false
+
+    // ── Button background (programmatic GradientDrawable for color animation) ──
+    // Rule: background color cannot be animated via compositable GPU properties,
+    //       but animating it on a GradientDrawable avoids a full layout pass.
+    private val btnRecordDrawable by lazy {
+        GradientDrawable().apply {
+            cornerRadius = 16f * resources.displayMetrics.density
+            setColor(getColor(R.color.mango_accent)) // starts as idle/orange
+        }
+    }
+    private var btnColorAnimator: ValueAnimator? = null
+
+    // ── File size ValueAnimator reference (cancellation fix) ──────────────────
+    // Bug fix: without this, rapid slider drags stacked multiple ValueAnimators
+    // all updating the same TextView → flickering.
+    private var fileSizeAnimator: ValueAnimator? = null
+
+    // ── Status dot breathing ───────────────────────────────────────────────────
+    private var statusDotAnimators: List<Animator>? = null
 
     companion object {
         private const val PERM_REQUEST = 101
-        private const val PREFS = "mango_prefs"
+        private const val PREFS        = "mango_prefs"
+        // Breathing cadences (per design doc):
+        //   IDLE → 1400ms ("watching quietly" — very slow, calm)
+        //   REC  →  900ms ("actively recording" — slightly elevated)
+        private const val BREATHING_IDLE_MS = 1400L
+        private const val BREATHING_REC_MS  =  900L
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Lifecycle
+    // ══════════════════════════════════════════════════════════════════════════
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,37 +111,79 @@ class MainActivity : AppCompatActivity() {
         setupAspectRatioChips()
         setupDurationSlider()
         setupToggleButton()
+
+        // BUG FIX #1: Compute initial file size immediately (no animation on first render).
+        // Previously: selectQuality/selectFps guards returned early because defaults matched,
+        // so updateFileSizeEstimate() was never called. lastEstimatedSizeMb stayed 0.
+        // When user first moved the slider, the ValueAnimator counted from 0 → actual,
+        // briefly showing "≈ 0 MB / clip". Fixed by calling with animate=false here.
+        updateFileSizeEstimate(animate = false)
+
+        // BUG FIX #3: Staggered entry must run AFTER layout pass.
+        // Previously called synchronously in onCreate() — views had width/height=0,
+        // causing alpha=0 to flash before layout, and translation offsets to be wrong.
+        // decorView.post() defers until first layout pass completes.
+        if (!hasAnimatedFirstAppearance) {
+            hasAnimatedFirstAppearance = true
+            window.decorView.post {
+                AnimationUtils.animateStaggeredEntry(listOf(
+                    findViewById(R.id.statusChip),
+                    findViewById(R.id.qualitySelector),
+                    findViewById(R.id.fpsSelector),
+                    findViewById(R.id.aspectRatioSelector),
+                    seekDuration.parent as View,
+                    seekDuration,
+                    tvFileSizeEstimate,
+                    btnToggleRecording
+                ))
+            }
+        }
     }
 
     private fun bindViews() {
-        textureView          = findViewById(R.id.textureView)
-        vStatusDot           = findViewById(R.id.vStatusDot)
-        tvStatus             = findViewById(R.id.tvStatus)
-        tvDurationValue      = findViewById(R.id.tvDurationValue)
-        tvFileSizeEstimate   = findViewById(R.id.tvFileSizeEstimate)
-        seekDuration         = findViewById(R.id.seekDuration)
-        btnToggleRecording   = findViewById(R.id.btnToggleRecording)
-        chip720p             = findViewById(R.id.chip720p)
-        chip1080p            = findViewById(R.id.chip1080p)
-        chip4k               = findViewById(R.id.chip4k)
-        chip24fps            = findViewById(R.id.chip24fps)
-        chip30fps            = findViewById(R.id.chip30fps)
-        chip60fps            = findViewById(R.id.chip60fps)
-        chipAspect16_9       = findViewById(R.id.chipAspect16_9)
-        chipAspect4_3        = findViewById(R.id.chipAspect4_3)
-        chipAspect1_1        = findViewById(R.id.chipAspect1_1)
+        textureView        = findViewById(R.id.textureView)
+        vStatusDot         = findViewById(R.id.vStatusDot)
+        tvStatus           = findViewById(R.id.tvStatus)
+        tvDurationValue    = findViewById(R.id.tvDurationValue)
+        tvFileSizeEstimate = findViewById(R.id.tvFileSizeEstimate)
+        seekDuration       = findViewById(R.id.seekDuration)
+        btnToggleRecording = findViewById(R.id.btnToggleRecording)
+        chip720p           = findViewById(R.id.chip720p)
+        chip1080p          = findViewById(R.id.chip1080p)
+        chip4k             = findViewById(R.id.chip4k)
+        chip24fps          = findViewById(R.id.chip24fps)
+        chip30fps          = findViewById(R.id.chip30fps)
+        chip60fps          = findViewById(R.id.chip60fps)
+        chipAspect16_9     = findViewById(R.id.chipAspect16_9)
+        chipAspect4_3      = findViewById(R.id.chipAspect4_3)
+        chipAspect1_1      = findViewById(R.id.chipAspect1_1)
+
+        // Attach programmatic GradientDrawable so color can animate smoothly
+        btnToggleRecording.background = btnRecordDrawable
     }
 
     private fun restoreState() {
         val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         isRecording = prefs.getBoolean("recording_active", false)
-        if (isRecording) setRecordingUI(true)
+        // BUG FIX #4: setRecordingUI() was called here AND again in onCreate().
+        // Two calls cause a redundant crossfade attempt and a double startBreathing()
+        // guard hit. Now called only once from setRecordingUI() at end of onCreate().
+        if (isRecording) {
+            textureView.visibility = View.INVISIBLE
+            textureView.alpha = 0f
+        } else {
+            textureView.visibility = View.VISIBLE
+            textureView.alpha = 1f
+        }
     }
 
-    // ── Quality Chips ──────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // Quality chips
+    // ══════════════════════════════════════════════════════════════════════════
 
     private fun setupQualityChips() {
-        selectQuality(chip720p, 1280, 720, 2_000_000)
+        // Initial visual state already set via XML (chip_bg_selected/unselected).
+        // Touch handlers registered — guard in selectQuality prevents same-chip re-fire.
         addChipTouchFeedback(chip720p)  { selectQuality(chip720p,  1280, 720,  2_000_000) }
         addChipTouchFeedback(chip1080p) { selectQuality(chip1080p, 1920, 1080, 8_000_000) }
         addChipTouchFeedback(chip4k)    { selectQuality(chip4k,    3840, 2160, 40_000_000) }
@@ -127,13 +201,22 @@ class MainActivity : AppCompatActivity() {
         if (!isRecording) closePreviewCamera { openPreviewCamera() }
     }
 
-    // ── FPS Chips ──────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // FPS chips
+    // ══════════════════════════════════════════════════════════════════════════
 
     private fun setupFpsChips() {
-        selectFps(chip30fps, 30)
         addChipTouchFeedback(chip24fps) { selectFps(chip24fps, 24) }
         addChipTouchFeedback(chip30fps) { selectFps(chip30fps, 30) }
-        addChipTouchFeedback(chip60fps) { selectFps(chip60fps, 60) }
+
+        // NEW: Check hardware capability before offering 60fps.
+        // Rule: never present a control whose effect will be silently ignored.
+        // If camera doesn't support it, disable chip at 0.38 opacity.
+        if (is60fpsSupported()) {
+            addChipTouchFeedback(chip60fps) { selectFps(chip60fps, 60) }
+        } else {
+            ChipInteraction.setChipDisabled(chip60fps)
+        }
     }
 
     private fun selectFps(chip: TextView, fps: Int) {
@@ -145,10 +228,26 @@ class MainActivity : AppCompatActivity() {
         if (!isRecording) closePreviewCamera { openPreviewCamera() }
     }
 
-    // ── Aspect Ratio Chips ─────────────────────────────────────────────────────
+    /** Returns true if the back camera's high-speed config includes ≥60fps. */
+    private fun is60fpsSupported(): Boolean = try {
+        val manager = getSystemService(CAMERA_SERVICE) as CameraManager
+        val cameraId = manager.cameraIdList.firstOrNull { id ->
+            manager.getCameraCharacteristics(id)
+                .get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+        } ?: return false
+        val map = manager.getCameraCharacteristics(cameraId)
+            .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        // High-speed ranges include 60fps if any upper bound ≥ 60
+        map?.highSpeedVideoFpsRanges?.any { it.upper >= 60 } ?: false
+    } catch (e: Exception) {
+        false
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Aspect ratio chips
+    // ══════════════════════════════════════════════════════════════════════════
 
     private fun setupAspectRatioChips() {
-        selectAspectRatio(chipAspect16_9, 16f, 9f)
         addChipTouchFeedback(chipAspect16_9) { selectAspectRatio(chipAspect16_9, 16f, 9f) }
         addChipTouchFeedback(chipAspect4_3)  { selectAspectRatio(chipAspect4_3,  4f,  3f) }
         addChipTouchFeedback(chipAspect1_1)  { selectAspectRatio(chipAspect1_1,  1f,  1f) }
@@ -163,27 +262,28 @@ class MainActivity : AppCompatActivity() {
         applyAspectRatioToPreview()
     }
 
-    // ── Duration Slider ────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // Duration slider
+    // ══════════════════════════════════════════════════════════════════════════
 
     @Suppress("InlinedApi")
     private fun setupDurationSlider() {
         seekDuration.progress = 10
-        tvDurationValue.text = "10 min"
+        tvDurationValue.text  = "10 min"
         seekDuration.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
                 val mins = maxOf(1, progress)
+                if (mins == selectedDurationMin) return
                 selectedDurationMin = mins
                 tvDurationValue.text = "$mins min"
-                updateFileSizeEstimate()
-                if (fromUser) {
-                    sb.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                }
+                if (fromUser) updateFileSizeEstimate()
+                // No per-tick haptic: haptic budget ≤4 per flow. Start/stop cover it.
             }
             override fun onStartTrackingTouch(sb: SeekBar) {
-                sb.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_PRESS)
+                AnimationUtils.hapticFeedback(sb, AnimationUtils.HapticWeight.LIGHT)
             }
             override fun onStopTrackingTouch(sb: SeekBar) {
-                sb.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                AnimationUtils.hapticFeedback(sb, AnimationUtils.HapticWeight.LIGHT)
             }
         })
     }
@@ -200,36 +300,66 @@ class MainActivity : AppCompatActivity() {
         updateFileSizeEstimate()
     }
 
-    private fun updateFileSizeEstimate() {
+    /**
+     * @param animate false on first call (avoids counting from 0 → actual on launch).
+     * BUG FIX #2: Cancels previous ValueAnimator before starting new one.
+     * Previously, rapid slider drags stacked N animators on the same TextView.
+     */
+    private fun updateFileSizeEstimate(animate: Boolean = true) {
         val fpsFactor   = selectedFps / 30.0
         val durationSec = selectedDurationMin * 60
-        val sizeMb      = (selectedBitrate * fpsFactor * durationSec) / 8 / 1_000_000
-        tvFileSizeEstimate.text = "≈ ${sizeMb.toInt()} MB / clip"
+        val sizeMb      = ((selectedBitrate * fpsFactor * durationSec) / 8 / 1_000_000).toInt()
+        if (sizeMb == lastEstimatedSizeMb) return
+
+        if (animate && lastEstimatedSizeMb > 0) {
+            fileSizeAnimator?.cancel()
+            fileSizeAnimator = AnimationUtils.animateValueChange(
+                tvFileSizeEstimate, lastEstimatedSizeMb, sizeMb,
+                prefix = "≈ ", suffix = " MB / clip"
+            )
+        } else {
+            // First render or non-user-triggered: set directly, no animation
+            tvFileSizeEstimate.text = "≈ $sizeMb MB / clip"
+        }
+        lastEstimatedSizeMb = sizeMb
     }
 
-    // ── Toggle Button ──────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // Recording toggle button
+    // ══════════════════════════════════════════════════════════════════════════
 
     @Suppress("InlinedApi")
     private fun setupToggleButton() {
+        // setRecordingUI() is called once from onResume to sync button visual to state.
+        // Applying initial UI here avoids the double-call bug.
+        setRecordingUI(isRecording)
+
         btnToggleRecording.setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_PRESS)
+                    AnimationUtils.hapticFeedback(v, AnimationUtils.HapticWeight.MEDIUM)
                     AnimationUtils.animateScalePress(
-                        v,
-                        targetScale = 0.94f,
+                        v, targetScale = 0.94f,
                         stiffness = AnimationUtils.SPRING_STIFFNESS_PRIMARY,
-                        damping = AnimationUtils.SPRING_DAMPING_PRIMARY
+                        damping   = AnimationUtils.SPRING_DAMPING_PRIMARY
                     )
                 }
                 MotionEvent.ACTION_UP -> {
+                    AnimationUtils.animateScaleRelease(
+                        v,
+                        stiffness = AnimationUtils.SPRING_STIFFNESS_PRIMARY,
+                        damping   = AnimationUtils.SPRING_DAMPING_PRIMARY
+                    )
+                    v.performClick()
+                    // Action and spring-back are concurrent — design rule:
+                    // action must not wait for animation to complete.
                     if (isRecording) stopRecording() else startRecording()
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     AnimationUtils.animateScaleRelease(
                         v,
                         stiffness = AnimationUtils.SPRING_STIFFNESS_PRIMARY,
-                        damping = AnimationUtils.SPRING_DAMPING_PRIMARY
+                        damping   = AnimationUtils.SPRING_DAMPING_PRIMARY
                     )
                 }
             }
@@ -241,124 +371,202 @@ class MainActivity : AppCompatActivity() {
         closePreviewCamera {
             val intent = Intent(this, RecordingService::class.java).apply {
                 action = RecordingService.ACTION_START
-                putExtra("width",     selectedWidth)
-                putExtra("height",    selectedHeight)
-                putExtra("bitrate",   selectedBitrate)
-                putExtra("fps",       selectedFps)
-                putExtra("chunk_ms",  selectedDurationMin * 60 * 1000L)
+                putExtra("width",    selectedWidth)
+                putExtra("height",   selectedHeight)
+                putExtra("bitrate",  selectedBitrate)
+                putExtra("fps",      selectedFps)
+                putExtra("chunk_ms", selectedDurationMin * 60 * 1000L)
             }
             startForegroundService(intent)
-            textureView.visibility = View.INVISIBLE
+
+            // Fade out preview (easeOut — system-initiated, not touch-driven)
+            textureView.animate()
+                .alpha(0f)
+                .setDuration(AnimationUtils.DURATION_SCREEN)
+                .setInterpolator(DecelerateInterpolator())
+                .withEndAction { textureView.visibility = View.INVISIBLE }
+                .start()
+
             setRecordingUI(true)
         }
     }
 
     private fun stopRecording() {
-        val intent = Intent(this, RecordingService::class.java).apply {
+        startService(Intent(this, RecordingService::class.java).apply {
             action = RecordingService.ACTION_STOP
-        }
-        startService(intent)
+        })
+
+        // Fade in preview
+        textureView.alpha = 0f
         textureView.visibility = View.VISIBLE
+        textureView.animate()
+            .alpha(1f)
+            .setDuration(AnimationUtils.DURATION_SCREEN)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+
         setRecordingUI(false)
         openPreviewCamera()
     }
 
-    // ── UI State ───────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // UI state management
+    // ══════════════════════════════════════════════════════════════════════════
 
     private fun setRecordingUI(recording: Boolean) {
         isRecording = recording
         if (recording) {
-            btnToggleRecording.text = "Stop Recording"
-            btnToggleRecording.setBackgroundColor(getColor(R.color.mango_active))
-            vStatusDot.setBackgroundColor(getColor(R.color.mango_active))
-            tvStatus.text = "REC"
-            startStatusDotBreathing()
+            crossfadeText(btnToggleRecording, "Stop Recording")
+            animateButtonColor(
+                from = getColor(R.color.mango_accent),  // orange
+                to   = getColor(R.color.mango_active)   // red
+            )
+            vStatusDot.setBackgroundResource(R.drawable.dot_recording)
+            crossfadeText(tvStatus, "REC")
+            startStatusDotBreathing(BREATHING_REC_MS)  // 900ms — elevated cadence
             setControlsEnabled(false)
         } else {
-            btnToggleRecording.text = "Start Recording"
-            btnToggleRecording.setBackgroundColor(getColor(R.color.mango_idle))
-            vStatusDot.setBackgroundColor(getColor(R.color.mango_dot_ready))
-            tvStatus.text = "IDLE"
-            stopStatusDotBreathing()
+            crossfadeText(btnToggleRecording, "Start Recording")
+            animateButtonColor(
+                from = getColor(R.color.mango_active),  // red
+                to   = getColor(R.color.mango_accent)   // orange
+            )
+            vStatusDot.setBackgroundResource(R.drawable.dot_ready)
+            crossfadeText(tvStatus, "IDLE")
+            startStatusDotBreathing(BREATHING_IDLE_MS) // 1400ms — calm, watching
             setControlsEnabled(true)
         }
     }
 
+    /**
+     * Animates button background color between states.
+     * NEW: replaces the previous setBackgroundResource() snap.
+     * Uses ArgbEvaluator on the GradientDrawable fill — keeps corner radius
+     * and avoids triggering a layout pass.
+     */
+    private fun animateButtonColor(from: Int, to: Int) {
+        if (from == to) return
+        btnColorAnimator?.cancel()
+        btnColorAnimator = AnimationUtils.animateButtonColor(btnRecordDrawable, from, to)
+    }
+
+    /** Crossfade: old text fades out (80ms), new text fades in (160ms). */
+    private fun crossfadeText(tv: TextView, newText: String) {
+        if (tv.text == newText) return
+        tv.animate()
+            .alpha(0f)
+            .setDuration(AnimationUtils.DURATION_INSTANT)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction {
+                tv.text = newText
+                tv.animate()
+                    .alpha(1f)
+                    .setDuration(AnimationUtils.DURATION_MICRO)
+                    .setInterpolator(DecelerateInterpolator())
+                    .start()
+            }.start()
+    }
+
     private fun setControlsEnabled(enabled: Boolean) {
-        val alpha = if (enabled) 1.0f else 0.38f
+        val targetAlpha = if (enabled) 1.0f else 0.38f
         listOf(chip720p, chip1080p, chip4k,
-            chip24fps, chip30fps, chip60fps,
-            chipAspect16_9, chipAspect4_3, chipAspect1_1,
-            seekDuration).forEach {
+               chip24fps, chip30fps, chip60fps,
+               chipAspect16_9, chipAspect4_3, chipAspect1_1,
+               seekDuration).forEach {
             it.isEnabled = enabled
-            it.alpha     = alpha
+            AnimationUtils.animateAlphaTransition(it, targetAlpha)
         }
     }
 
     private fun setChipActive(chip: TextView) {
-        chip.setBackgroundColor(getColor(R.color.mango_accent))
-        chip.setTextColor(getColor(R.color.mango_text_primary))
-        AnimationUtils.animateScaleRelease(
-            chip,
-            stiffness = AnimationUtils.SPRING_STIFFNESS_SECONDARY,
-            damping = AnimationUtils.SPRING_DAMPING_SECONDARY
-        )
-        chip.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        ChipInteraction.setChipActive(chip)
     }
 
     private fun setChipInactive(chip: TextView) {
-        chip.setBackgroundColor(getColor(R.color.mango_surface_elevated))
-        chip.setTextColor(getColor(R.color.mango_text_secondary))
+        ChipInteraction.setChipInactive(chip)
     }
 
-    // ── Touch Feedback for Chips ───────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // Chip touch feedback
+    // ══════════════════════════════════════════════════════════════════════════
 
+    /**
+     * Three-phase interaction:
+     *   ACTION_DOWN   → Phase 1 Recognition: haptic + scale press (0.93)
+     *   ACTION_UP     → Phase 3 Release: if within bounds → snap-lock (setChipActive);
+     *                                    if outside bounds → neutral spring-back
+     *   ACTION_CANCEL → Neutral spring-back (user changed their mind mid-press)
+     *
+     * BUG FIX #5: Previously ACTION_UP called onClicked() unconditionally.
+     * A press-drag-release outside the chip would still trigger selection.
+     * Now bounds-checked: if finger lifted outside the view, treat as cancel.
+     *
+     * BUG FIX: Previously both onChipReleased() AND setChipActive() each
+     * started a spring to 1.0 → two competing animations. Resolved by having
+     * setChipActive() own the release (snap-lock spring), and onChipCancelled()
+     * own the neutral release. The ACTION_UP path no longer calls onChipReleased().
+     */
     @Suppress("InlinedApi")
     private fun addChipTouchFeedback(chip: TextView, onClicked: () -> Unit) {
         chip.setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_PRESS)
-                    AnimationUtils.animateScalePress(
-                        v,
-                        targetScale = 0.93f,
-                        stiffness = AnimationUtils.SPRING_STIFFNESS_SECONDARY,
-                        damping = AnimationUtils.SPRING_DAMPING_SECONDARY
-                    )
+                    ChipInteraction.onChipPressed(v)
                 }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    onClicked()
+                MotionEvent.ACTION_UP -> {
+                    val withinBounds = event.x >= 0 && event.x <= v.width &&
+                                       event.y >= 0 && event.y <= v.height
+                    if (withinBounds) {
+                        v.performClick()
+                        onClicked() // setChipActive() inside handles the snap-lock spring
+                    } else {
+                        ChipInteraction.onChipCancelled(v) // neutral spring-back
+                    }
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    ChipInteraction.onChipCancelled(v)
                 }
             }
             true
         }
     }
 
-    // ── Status Dot Breathing Animation ─────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // Status dot breathing animation
+    // ══════════════════════════════════════════════════════════════════════════
 
-    private var statusDotAnimator: ObjectAnimator? = null
-
-    private fun startStatusDotBreathing() {
-        if (statusDotAnimator != null) return
-        statusDotAnimator = ObjectAnimator.ofFloat(vStatusDot, "alpha", 0.5f, 1.0f).apply {
-            duration = 1200  // 1200ms ≈ slow breathing
-            repeatMode = ObjectAnimator.REVERSE
-            repeatCount = ObjectAnimator.INFINITE
-            start()
-        }
+    /**
+     * NEW: Both IDLE and REC states breathe — with distinct cadences.
+     *   IDLE → 1400ms: "watching quietly," very slow, communicates calm readiness
+     *   REC  →  900ms: "actively recording," slightly elevated, distinct from idle
+     *
+     * Previously only REC state breathed. IDLE was static — missed the ambient
+     * motion principle ("Secondary Action reinforces primary state without competing").
+     *
+     * The breathing restarts when switching states so the new cadence takes effect
+     * immediately rather than waiting for the old cycle to complete.
+     */
+    private fun startStatusDotBreathing(durationMs: Long) {
+        // Always restart — state changed, new cadence must apply immediately
+        stopStatusDotBreathing()
+        statusDotAnimators = AnimationUtils.startBreathing(vStatusDot, durationMs)
     }
 
     private fun stopStatusDotBreathing() {
-        statusDotAnimator?.cancel()
-        statusDotAnimator = null
-        vStatusDot.alpha = 1.0f
+        statusDotAnimators?.forEach { it.cancel() }
+        statusDotAnimators = null
+        vStatusDot.alpha  = 1.0f
+        vStatusDot.scaleX = 1.0f
+        vStatusDot.scaleY = 1.0f
     }
 
-    // ── Camera Preview ─────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // Camera preview
+    // ══════════════════════════════════════════════════════════════════════════
 
     private fun openPreviewCamera() {
         if (!hasPermissions()) return
-        cameraThread = HandlerThread("MangoCamera").also { it.start() }
+        cameraThread  = HandlerThread("MangoCamera").also { it.start() }
         cameraHandler = Handler(cameraThread.looper)
 
         val manager  = getSystemService(CAMERA_SERVICE) as CameraManager
@@ -407,12 +615,9 @@ class MainActivity : AppCompatActivity() {
                     val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
                         .apply {
                             addTarget(surface)
-                            set(
-                                android.hardware.camera2.CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
-                                android.util.Range(selectedFps, selectedFps)
-                            )
-                        }
-                        .build()
+                            set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                                Range(selectedFps, selectedFps))
+                        }.build()
                     session.setRepeatingRequest(request, null, cameraHandler)
                     runOnUiThread { applyAspectRatioToPreview() }
                 }
@@ -421,15 +626,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun closePreviewCamera(onClosed: () -> Unit) {
-        captureSession?.close()
-        captureSession = null
-        cameraDevice?.close()
-        cameraDevice = null
+        captureSession?.close(); captureSession = null
+        cameraDevice?.close();   cameraDevice   = null
         if (::cameraThread.isInitialized) cameraThread.quitSafely()
         onClosed()
     }
 
-    // ── Preview Transform ──────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // Preview transform
+    // ══════════════════════════════════════════════════════════════════════════
 
     private fun applyAspectRatioToPreview() {
         val manager = getSystemService(CAMERA_SERVICE) as CameraManager
@@ -445,28 +650,7 @@ class MainActivity : AppCompatActivity() {
         val viewH = textureView.height.toFloat()
         if (viewW == 0f || viewH == 0f) return
 
-        // Device is landscape. Sensor is 90°, so buffer is portrait-shaped (h > w).
-        // TextureView renders the buffer as-is (portrait), then we rotate -90°.
-        // We need to scale the buffer so that AFTER rotation it matches our target aspect.
-
-        // Target: how the final rotated preview should look in landscape view space
-        val targetAspect = aspectRatioW / aspectRatioH  // e.g. 16/9 = 1.77 (wide)
-
-        // Buffer dimensions (portrait-shaped for 90° sensor)
-        val bufW = selectedWidth.toFloat()   // e.g. 1280 (this becomes height after rotation)
-        val bufH = selectedHeight.toFloat()  // e.g. 720  (this becomes width after rotation)
-
-        // After -90° rotation in view space:
-        // rendered width  = bufH scaled to view
-        // rendered height = bufW scaled to view
-        // Default scale just to fit buffer in view before rotation:
-        // TextureView fills its own size, so buffer is stretched to viewW x viewH before rotation.
-        // We need to counteract that stretch and apply correct aspect.
-
-        // Without any matrix, TextureView stretches buffer to fill (viewW x viewH).
-        // After rotation the content appears as (viewH x viewW) effective.
-        // We need to scale so effective content = targetAspect.
-
+        val targetAspect = aspectRatioW / aspectRatioH
         val matrix = android.graphics.Matrix()
         val cx = viewW / 2f
         val cy = viewH / 2f
@@ -475,27 +659,12 @@ class MainActivity : AppCompatActivity() {
             90  -> -90f
             270 ->  90f
             180 -> 180f
-            else -> 0f
+            else ->  0f
         }
 
         if (sensorOrientation == 90 || sensorOrientation == 270) {
-            // After rotation, natural content aspect in view = viewH/viewW (portrait in landscape view)
-            // We want targetAspect (landscape ratio)
-            // Scale X and Y in pre-rotation space to achieve this
-
-            // To get targetAspect after -90° rotation:
-            // effective_w = scaleY * viewH  (Y axis becomes width after rotation)
-            // effective_h = scaleX * viewW  (X axis becomes height after rotation)
-            // effective_w / effective_h = targetAspect
-            // → scaleY * viewH / (scaleX * viewW) = targetAspect
-
-            // Fit to view: make effective_w = viewW (fill width)
-            // scaleY * viewH = viewW  → scaleY = viewW / viewH
-            // scaleX * viewW = viewW / targetAspect → scaleX = 1 / targetAspect
-
             val scaleX = 1f / targetAspect
             val scaleY = viewW / viewH
-
             matrix.postScale(scaleX, scaleY, cx, cy)
         }
 
@@ -503,19 +672,20 @@ class MainActivity : AppCompatActivity() {
         textureView.setTransform(matrix)
     }
 
-    // ── Permissions ────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // Permissions
+    // ══════════════════════════════════════════════════════════════════════════
 
     private fun requestPermissions() {
         val perms = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
         if (!hasPermissions()) ActivityCompat.requestPermissions(this, perms, PERM_REQUEST)
     }
 
-    private fun hasPermissions(): Boolean {
-        return ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
-                PackageManager.PERMISSION_GRANTED &&
-                ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
-                PackageManager.PERMISSION_GRANTED
-    }
+    private fun hasPermissions() =
+        ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED &&
+        ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
 
     override fun onRequestPermissionsResult(
         requestCode: Int, permissions: Array<String>, grantResults: IntArray
@@ -527,10 +697,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // Activity lifecycle
+    // ══════════════════════════════════════════════════════════════════════════
+
     override fun onResume() {
         super.onResume()
         val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         isRecording = prefs.getBoolean("recording_active", false)
+        // setRecordingUI() syncs button color, text, dot, breathing, and controls.
+        // The btnRecordDrawable starts at mango_accent, so the 'from' color for
+        // color animation is accent; setRecordingUI will animate to active if recording.
         setRecordingUI(isRecording)
         if (!isRecording && hasPermissions()) openPreviewCamera()
     }

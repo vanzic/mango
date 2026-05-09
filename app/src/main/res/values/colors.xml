@@ -1,9 +1,9 @@
 <resources>
-    <!-- Depth system: brightness delta for z-level elevation in dark mode -->
+    <!-- Depth system: strictly following Premium Design Guide values -->
     <color name="mango_background">#0A0A0A</color>          <!-- z=0: deepest -->
-    <color name="mango_surface">#141414</color>              <!-- z=1: content layer -->
-    <color name="mango_surface_elevated">#1E1E1E</color>      <!-- z=2: raised cards -->
-    <color name="mango_idle">#1A1A1A</color>                 <!-- button resting state -->
+    <color name="mango_surface">#1C1C1E</color>              <!-- z=1: content background -->
+    <color name="mango_surface_elevated">#2C2C2E</color>      <!-- z=2: raised cards -->
+    <color name="mango_idle">#3A3A3C</color>                 <!-- z=3: elevated elements/buttons -->
 
     <!-- Primary semantic colors (iOS-standard values) -->
     <color name="mango_active">#FF3B30</color>               <!-- Error/active: red -->

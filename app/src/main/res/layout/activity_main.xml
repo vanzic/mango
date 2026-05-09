@@ -6,330 +6,360 @@
     android:orientation="horizontal"
     android:background="@color/mango_background">
 
-    <!-- LEFT: Camera Preview (55%) -->
+    <!-- LEFT: Camera Preview (55%) — full bleed, z=0 -->
     <TextureView
         android:id="@+id/textureView"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="55" />
 
-    <!-- RIGHT: Control Panel (45%) -->
-    <ScrollView
-        android:id="@+id/controlPanel"
+    <!-- RIGHT: Control Panel (45%) — floating card with rounded left edge, z=1 -->
+    <LinearLayout
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="45"
-        android:background="@color/mango_surface"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:paddingTop="24dp"
-        android:paddingBottom="24dp"
-        android:clipToPadding="false"
-        android:scrollbars="none">
+        android:orientation="vertical"
+        android:background="@drawable/control_panel_bg"
+        android:clipChildren="false"
+        android:clipToPadding="false">
 
-        <LinearLayout
+        <!--
+            MangoScrollView: overscroll fires a light haptic at the rubber-band boundary.
+            Rule: resistance is not just visual — it must be tactile.
+        -->
+        <com.vixcy.mango.MangoScrollView
+            android:id="@+id/controlPanel"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:gravity="center_horizontal">
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingTop="20dp"
+            android:clipToPadding="false"
+            android:clipChildren="false"
+            android:scrollbars="none"
+            android:overScrollMode="always">
 
-            <!-- STATUS CHIP: breathing indicator for live/active state -->
             <LinearLayout
-                android:id="@+id/statusChip"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:background="@color/mango_surface_elevated"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:paddingTop="8dp"
-                android:paddingBottom="8dp"
-                android:layout_marginBottom="32dp">
+                android:orientation="vertical"
+                android:gravity="center_horizontal"
+                android:clipChildren="false">
 
-                <View
-                    android:id="@+id/vStatusDot"
-                    android:layout_width="8dp"
-                    android:layout_height="8dp"
-                    android:background="@color/mango_dot_ready"
-                    android:layout_marginEnd="8dp" />
-
-                <TextView
-                    android:id="@+id/tvStatus"
+                <!-- STATUS CHIP ─────────────────────────────────────────────── -->
+                <LinearLayout
+                    android:id="@+id/statusChip"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="IDLE"
-                    android:textColor="@color/mango_text_primary"
-                    android:textSize="11sp"
-                    android:letterSpacing="0.12"
-                    android:fontFamily="monospace" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:background="@drawable/status_chip_bg"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:layout_marginBottom="20dp">
 
-            </LinearLayout>
+                    <View
+                        android:id="@+id/vStatusDot"
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:background="@drawable/dot_ready"
+                        android:layout_marginEnd="8dp" />
 
-            <!-- QUALITY LABEL: tertiary text hierarchy -->
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="QUALITY"
-                android:textColor="@color/mango_text_tertiary"
-                android:textSize="10sp"
-                android:letterSpacing="0.12"
-                android:layout_marginBottom="12dp"
-                android:alpha="0.65" />
+                    <TextView
+                        android:id="@+id/tvStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="IDLE"
+                        android:textColor="@color/mango_text_primary"
+                        android:textSize="11sp"
+                        android:letterSpacing="0.12"
+                        android:fontFamily="monospace" />
 
-            <!-- QUALITY SELECTOR: 44×44pt minimum tap targets, spring feedback -->
-            <LinearLayout
-                android:id="@+id/qualitySelector"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginBottom="28dp"
-                android:gravity="center">
+                </LinearLayout>
 
+                <!-- ═══ QUALITY ═══ ──────────────────────────────────────────── -->
+                <!--
+                    FIX: Double-dimming removed.
+                    Old: mango_text_tertiary (#5E5E62, ~37% lum) + alpha=0.55 → effectively 20% lum (illegible).
+                    New: mango_text_secondary (#8E8E93) + alpha=0.6 → single, consistent dimming.
+                    Rule: use opacity OR a dim color, never both.
+                -->
                 <TextView
-                    android:id="@+id/chip720p"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
-                    android:gravity="center"
-                    android:text="720p"
-                    android:textColor="@color/mango_text_primary"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:background="@color/mango_accent"
-                    android:layout_marginEnd="6dp"
-                    android:clickable="true"
-                    android:focusable="true" />
-
-                <TextView
-                    android:id="@+id/chip1080p"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
-                    android:gravity="center"
-                    android:text="1080p"
-                    android:textColor="@color/mango_text_secondary"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:background="@color/mango_surface_elevated"
-                    android:layout_marginEnd="6dp"
-                    android:clickable="true"
-                    android:focusable="true" />
-
-                <TextView
-                    android:id="@+id/chip4k"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
-                    android:gravity="center"
-                    android:text="4K"
-                    android:textColor="@color/mango_text_secondary"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:background="@color/mango_surface_elevated"
-                    android:clickable="true"
-                    android:focusable="true" />
-
-            </LinearLayout>
-
-            <!-- FPS LABEL -->
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="FRAME RATE"
-                android:textColor="@color/mango_text_tertiary"
-                android:textSize="10sp"
-                android:letterSpacing="0.12"
-                android:layout_marginBottom="12dp"
-                android:alpha="0.65" />
-
-            <!-- FPS SELECTOR: 44×44pt tap targets with spring feedback -->
-            <LinearLayout
-                android:id="@+id/fpsSelector"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginBottom="28dp"
-                android:gravity="center">
-
-                <TextView
-                    android:id="@+id/chip24fps"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
-                    android:gravity="center"
-                    android:text="24"
-                    android:textColor="@color/mango_text_secondary"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:background="@color/mango_surface_elevated"
-                    android:layout_marginEnd="6dp"
-                    android:clickable="true"
-                    android:focusable="true" />
-
-                <TextView
-                    android:id="@+id/chip30fps"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
-                    android:gravity="center"
-                    android:text="30"
-                    android:textColor="@color/mango_text_primary"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:background="@color/mango_accent"
-                    android:layout_marginEnd="6dp"
-                    android:clickable="true"
-                    android:focusable="true" />
-
-                <TextView
-                    android:id="@+id/chip60fps"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
-                    android:gravity="center"
-                    android:text="60"
-                    android:textColor="@color/mango_text_secondary"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:background="@color/mango_surface_elevated"
-                    android:clickable="true"
-                    android:focusable="true" />
-
-            </LinearLayout>
-
-            <!-- ASPECT RATIO LABEL -->
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="ASPECT RATIO"
-                android:textColor="@color/mango_text_tertiary"
-                android:textSize="10sp"
-                android:letterSpacing="0.12"
-                android:layout_marginBottom="12dp"
-                android:alpha="0.65" />
-
-            <!-- ASPECT RATIO SELECTOR: 44×44pt tap targets with spring feedback -->
-            <LinearLayout
-                android:id="@+id/aspectRatioSelector"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginBottom="28dp"
-                android:gravity="center">
-
-                <TextView
-                    android:id="@+id/chipAspect16_9"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
-                    android:gravity="center"
-                    android:text="16:9"
-                    android:textColor="@color/mango_text_primary"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:background="@color/mango_accent"
-                    android:layout_marginEnd="6dp"
-                    android:clickable="true"
-                    android:focusable="true" />
-
-                <TextView
-                    android:id="@+id/chipAspect4_3"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
-                    android:gravity="center"
-                    android:text="4:3"
-                    android:textColor="@color/mango_text_secondary"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:background="@color/mango_surface_elevated"
-                    android:layout_marginEnd="6dp"
-                    android:clickable="true"
-                    android:focusable="true" />
-
-                <TextView
-                    android:id="@+id/chipAspect1_1"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
-                    android:gravity="center"
-                    android:text="1:1"
-                    android:textColor="@color/mango_text_secondary"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:background="@color/mango_surface_elevated"
-                    android:clickable="true"
-                    android:focusable="true" />
-
-            </LinearLayout>
-
-            <!-- DURATION LABEL: tertiary text with accent value -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginBottom="12dp">
-
-                <TextView
-                    android:layout_width="0dp"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="CLIP DURATION"
-                    android:textColor="@color/mango_text_tertiary"
+                    android:text="QUALITY"
+                    android:textColor="@color/mango_text_secondary"
                     android:textSize="10sp"
                     android:letterSpacing="0.12"
-                    android:alpha="0.65" />
+                    android:layout_marginBottom="8dp"
+                    android:alpha="0.6" />
 
-                <TextView
-                    android:id="@+id/tvDurationValue"
-                    android:layout_width="wrap_content"
+                <LinearLayout
+                    android:id="@+id/qualitySelector"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="10 min"
-                    android:textColor="@color/mango_accent"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="16dp"
+                    android:gravity="center"
+                    android:clipChildren="false">
+
+                    <TextView
+                        android:id="@+id/chip720p"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:text="720p"
+                        android:textColor="@color/mango_text_primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:background="@drawable/chip_bg_selected"
+                        android:layout_marginEnd="8dp"
+                        android:clickable="true"
+                        android:focusable="true" />
+
+                    <TextView
+                        android:id="@+id/chip1080p"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:text="1080p"
+                        android:textColor="@color/mango_text_secondary"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:background="@drawable/chip_bg_unselected"
+                        android:layout_marginEnd="8dp"
+                        android:clickable="true"
+                        android:focusable="true" />
+
+                    <TextView
+                        android:id="@+id/chip4k"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:text="4K"
+                        android:textColor="@color/mango_text_secondary"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:background="@drawable/chip_bg_unselected"
+                        android:clickable="true"
+                        android:focusable="true" />
+
+                </LinearLayout>
+
+                <!-- ═══ FRAME RATE ═══ ───────────────────────────────────────── -->
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="FRAME RATE"
+                    android:textColor="@color/mango_text_secondary"
+                    android:textSize="10sp"
+                    android:letterSpacing="0.12"
+                    android:layout_marginBottom="8dp"
+                    android:alpha="0.6" />
+
+                <LinearLayout
+                    android:id="@+id/fpsSelector"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="16dp"
+                    android:gravity="center"
+                    android:clipChildren="false">
+
+                    <TextView
+                        android:id="@+id/chip24fps"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:text="24"
+                        android:textColor="@color/mango_text_secondary"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:background="@drawable/chip_bg_unselected"
+                        android:layout_marginEnd="8dp"
+                        android:clickable="true"
+                        android:focusable="true" />
+
+                    <TextView
+                        android:id="@+id/chip30fps"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:text="30"
+                        android:textColor="@color/mango_text_primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:background="@drawable/chip_bg_selected"
+                        android:layout_marginEnd="8dp"
+                        android:clickable="true"
+                        android:focusable="true" />
+
+                    <TextView
+                        android:id="@+id/chip60fps"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:text="60"
+                        android:textColor="@color/mango_text_secondary"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:background="@drawable/chip_bg_unselected"
+                        android:clickable="true"
+                        android:focusable="true" />
+
+                </LinearLayout>
+
+                <!-- ═══ ASPECT RATIO ═══ ─────────────────────────────────────── -->
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="ASPECT RATIO"
+                    android:textColor="@color/mango_text_secondary"
+                    android:textSize="10sp"
+                    android:letterSpacing="0.12"
+                    android:layout_marginBottom="8dp"
+                    android:alpha="0.6" />
+
+                <LinearLayout
+                    android:id="@+id/aspectRatioSelector"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="16dp"
+                    android:gravity="center"
+                    android:clipChildren="false">
+
+                    <TextView
+                        android:id="@+id/chipAspect16_9"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:text="16:9"
+                        android:textColor="@color/mango_text_primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:background="@drawable/chip_bg_selected"
+                        android:layout_marginEnd="8dp"
+                        android:clickable="true"
+                        android:focusable="true" />
+
+                    <TextView
+                        android:id="@+id/chipAspect4_3"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:text="4:3"
+                        android:textColor="@color/mango_text_secondary"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:background="@drawable/chip_bg_unselected"
+                        android:layout_marginEnd="8dp"
+                        android:clickable="true"
+                        android:focusable="true" />
+
+                    <TextView
+                        android:id="@+id/chipAspect1_1"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:text="1:1"
+                        android:textColor="@color/mango_text_secondary"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:background="@drawable/chip_bg_unselected"
+                        android:clickable="true"
+                        android:focusable="true" />
+
+                </LinearLayout>
+
+                <!-- ═══ CLIP DURATION ═══ ────────────────────────────────────── -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="8dp"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="CLIP DURATION"
+                        android:textColor="@color/mango_text_secondary"
+                        android:textSize="10sp"
+                        android:letterSpacing="0.12"
+                        android:alpha="0.6" />
+
+                    <TextView
+                        android:id="@+id/tvDurationValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="10 min"
+                        android:textColor="@color/mango_accent"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/seekDuration"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="133"
+                    android:progress="10"
+                    android:layout_marginBottom="12dp"
+                    android:thumbOffset="0dp"
+                    android:thumb="@drawable/seekbar_thumb"
+                    android:progressDrawable="@drawable/seekbar_track"
+                    android:maxHeight="4dp" />
+
+                <!-- FILE SIZE ESTIMATE -->
+                <TextView
+                    android:id="@+id/tvFileSizeEstimate"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="@color/mango_text_secondary"
                     android:textSize="11sp"
-                    android:textStyle="bold" />
+                    android:gravity="center"
+                    android:layout_marginBottom="16dp"
+                    android:alpha="0.60" />
 
             </LinearLayout>
+        </com.vixcy.mango.MangoScrollView>
 
-            <!-- DURATION SLIDER: improved visual feedback -->
-            <SeekBar
-                android:id="@+id/seekDuration"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:max="133"
-                android:progress="10"
-                android:layout_marginBottom="20dp"
-                android:thumbOffset="0dp" />
+        <!--
+            RECORDING BUTTON — fixed outside ScrollView, always reachable.
+            Background is set programmatically as a GradientDrawable so the
+            color can animate smoothly (ValueAnimator.ofArgb) instead of snapping.
+        -->
+        <TextView
+            android:id="@+id/btnToggleRecording"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:gravity="center"
+            android:text="Start Recording"
+            android:textColor="@color/mango_text_primary"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:layout_marginStart="20dp"
+            android:layout_marginEnd="20dp"
+            android:layout_marginBottom="20dp"
+            android:clickable="true"
+            android:focusable="true" />
 
-            <!-- FILE SIZE ESTIMATE: secondary text hierarchy -->
-            <TextView
-                android:id="@+id/tvFileSizeEstimate"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="≈ 150 MB / clip"
-                android:textColor="@color/mango_text_secondary"
-                android:textSize="11sp"
-                android:gravity="center"
-                android:layout_marginBottom="40dp"
-                android:alpha="0.72" />
-
-            <!-- START/STOP BUTTON: 44×44pt minimum, spring press/release feedback, haptic -->
-            <TextView
-                android:id="@+id/btnToggleRecording"
-                android:layout_width="match_parent"
-                android:layout_height="56dp"
-                android:gravity="center"
-                android:text="Start Recording"
-                android:textColor="@color/mango_text_primary"
-                android:textSize="15sp"
-                android:textStyle="bold"
-                android:background="@color/mango_idle"
-                android:clickable="true"
-                android:focusable="true"
-                android:elevation="2dp" />
-
-        </LinearLayout>
-    </ScrollView>
+    </LinearLayout>
 
 </LinearLayout>

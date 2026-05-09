@@ -1,33 +1,52 @@
 package com.vixcy.mango
 
+import android.animation.Animator
+import android.animation.ArgbEvaluator
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
+import android.graphics.drawable.GradientDrawable
 import android.view.View
 import android.view.HapticFeedbackConstants
+import android.view.animation.AccelerateDecelerateInterpolator
+import android.view.animation.DecelerateInterpolator
+import android.widget.TextView
 import androidx.dynamicanimation.animation.DynamicAnimation
 import androidx.dynamicanimation.animation.SpringAnimation
 
 object AnimationUtils {
-    // Spring parameters (tension & damping calibrated for touch-initiated interactions)
-    const val SPRING_DAMPING_PRIMARY = 0.82f   // Card expand, primary object motion
-    const val SPRING_DAMPING_SECONDARY = 0.78f // Button press, secondary elements
-    const val SPRING_DAMPING_MICRO = 0.70f     // Micro-interactions, subtle feedback
-    const val SPRING_STIFFNESS_PRIMARY = 120f
-    const val SPRING_STIFFNESS_SECONDARY = 160f
-    const val SPRING_STIFFNESS_MICRO = 220f
 
-    // Duration tokens (milliseconds)
-    const val DURATION_INSTANT = 80L      // Feedback: scale, color tint
-    const val DURATION_MICRO = 160L       // State badge, icon morph
-    const val DURATION_ELEMENT = 240L     // Element appear/disappear
-    const val DURATION_COMPONENT = 360L   // Component transition
-    const val DURATION_SCREEN = 480L      // Screen/sheet transition
+    // ── Spring vocabulary ──────────────────────────────────────────────────────
+    // Rule: spring physics for ALL touch-initiated transitions.
+    //       Formula: stiffness = (2π / T)²
+    //
+    // PRIMARY   (~0.5s response)  — Card expand, primary object motion
+    // SECONDARY (~0.3s response)  — Chip/button press, component transition
+    // MICRO     (~0.18s response) — Haptic-sync, instant mechanical feel
 
-    // Stagger formula: capped at 8 elements × 45ms offset
-    fun getStaggerDelay(index: Int, baseDelayMs: Long = 45L): Long {
-        val cappedIndex = minOf(index, 8)
-        return cappedIndex * baseDelayMs
-    }
+    const val SPRING_DAMPING_PRIMARY   = 0.82f  // Weighted, confident
+    const val SPRING_DAMPING_SECONDARY = 0.70f  // Bouncy, tactile
+    const val SPRING_DAMPING_MICRO     = 0.65f  // Snappy, mechanical
 
-    // Spring scale animation: 1.0 → targetScale → 1.0 with spring physics
+    const val SPRING_STIFFNESS_PRIMARY   = 150f   // ~0.5s
+    const val SPRING_STIFFNESS_SECONDARY = 440f   // ~0.3s
+    const val SPRING_STIFFNESS_MICRO     = 1200f  // ~0.18s
+
+    // ── Duration tokens ────────────────────────────────────────────────────────
+    // Rule: duration communicates weight. Faster = more reactive. Slower = more significant.
+    const val DURATION_INSTANT   = 80L   // Feedback: scale, color tint
+    const val DURATION_MICRO     = 160L  // State badge, icon morph, value update
+    const val DURATION_ELEMENT   = 240L  // Element appear/disappear
+    const val DURATION_COMPONENT = 360L  // Component transition
+    const val DURATION_SCREEN    = 480L  // Screen/sheet transition
+    const val DURATION_EMPHASIS  = 720L  // Onboarding, achievement
+
+    // ── Stagger formula ────────────────────────────────────────────────────────
+    // Capped at 8 elements × 45ms. Beyond 8 elements stagger = bug, not feature.
+    fun getStaggerDelay(index: Int, baseDelayMs: Long = 45L): Long =
+        minOf(index, 8) * baseDelayMs
+
+    // ── Press / Release springs ────────────────────────────────────────────────
+
     fun animateScalePress(
         view: View,
         targetScale: Float = 0.96f,
@@ -46,7 +65,6 @@ object AnimationUtils {
         }.start()
     }
 
-    // Spring release: animate scale from pressed back to 1.0
     fun animateScaleRelease(
         view: View,
         stiffness: Float = SPRING_STIFFNESS_MICRO,
@@ -62,7 +80,8 @@ object AnimationUtils {
         }.start()
     }
 
-    // Translation spring: from current position to target, with optional velocity inheritance
+    // ── Translation spring with velocity inheritance ──────────────────────────
+    // Rule: animation that starts from a gesture inherits that gesture's velocity.
     fun animateTranslation(
         view: View,
         targetX: Float = 0f,
@@ -77,7 +96,6 @@ object AnimationUtils {
             spring.dampingRatio = damping
             setStartVelocity(startVelocityX)
         }.start()
-
         SpringAnimation(view, DynamicAnimation.TRANSLATION_Y, targetY).apply {
             spring.stiffness = stiffness
             spring.dampingRatio = damping
@@ -85,15 +103,120 @@ object AnimationUtils {
         }.start()
     }
 
-    // Haptic feedback calibrated to interaction weight
+    // ── Breathing animation (status indicator) ─────────────────────────────────
+    // The 1200ms cycle ≈ human resting respiration. The brain reads it as
+    // "calm, living, monitoring." A faster cycle (700ms) reads as elevated/alerting.
+    //
+    // Both IDLE (green) and REC (red) states breathe — with different cadences:
+    //   IDLE: 1400ms — very slow, "watching quietly"
+    //   REC:   900ms — slightly elevated, "actively recording"
+    fun startBreathing(view: View, durationMs: Long = 1200L): List<Animator> {
+        val interp = AccelerateDecelerateInterpolator() // sinusoidal — matches breathing rhythm
+        val scaleX = ObjectAnimator.ofFloat(view, "scaleX", 0.85f, 1.0f).apply {
+            duration = durationMs
+            repeatMode = ObjectAnimator.REVERSE
+            repeatCount = ObjectAnimator.INFINITE
+            interpolator = interp
+        }
+        val scaleY = ObjectAnimator.ofFloat(view, "scaleY", 0.85f, 1.0f).apply {
+            duration = durationMs
+            repeatMode = ObjectAnimator.REVERSE
+            repeatCount = ObjectAnimator.INFINITE
+            interpolator = interp
+        }
+        val alpha = ObjectAnimator.ofFloat(view, "alpha", 0.45f, 1.0f).apply {
+            duration = durationMs
+            repeatMode = ObjectAnimator.REVERSE
+            repeatCount = ObjectAnimator.INFINITE
+            interpolator = interp
+        }
+        scaleX.start()
+        scaleY.start()
+        alpha.start()
+        return listOf(scaleX, scaleY, alpha)
+    }
+
+    // ── Value counting animation ───────────────────────────────────────────────
+    // Returns the ValueAnimator so callers can CANCEL it before starting a new one.
+    // Bug fix: previously callers couldn't cancel, causing multiple animators to
+    // stack on rapid slider drags and produce flickering.
+    //
+    // Rule: numbers that update with meaningful data should count, not snap.
+    //       Use animate=false for initial/non-user-triggered updates.
+    fun animateValueChange(
+        view: TextView,
+        startValue: Int,
+        endValue: Int,
+        prefix: String = "",
+        suffix: String = ""
+    ): ValueAnimator = ValueAnimator.ofInt(startValue, endValue).apply {
+        duration = 480L // 400–600ms per design rule
+        interpolator = DecelerateInterpolator()
+        addUpdateListener { view.text = "$prefix${it.animatedValue}$suffix" }
+        start()
+    }
+
+    // ── Button background color animation ─────────────────────────────────────
+    // Animates between two fill colors on a GradientDrawable (keeps corner radius).
+    // Rule: only compositable properties. Background color requires ArgbEvaluator
+    // on the drawable fill, NOT setBackgroundColor() which triggers a layout pass.
+    fun animateButtonColor(
+        drawable: GradientDrawable,
+        fromColor: Int,
+        toColor: Int,
+        durationMs: Long = DURATION_ELEMENT
+    ): ValueAnimator = ValueAnimator().apply {
+        setIntValues(fromColor, toColor)
+        setEvaluator(ArgbEvaluator())
+        duration = durationMs
+        interpolator = DecelerateInterpolator()
+        addUpdateListener { drawable.setColor(it.animatedValue as Int) }
+        start()
+    }
+
+    // ── Staggered entry (first-appearance only) ────────────────────────────────
+    // Must be called AFTER layout pass — wrap in decorView.post{} at call site.
+    // Rule: only animate-in on first appearance. Never re-animate on return.
+    fun animateStaggeredEntry(views: List<View>, baseDelayMs: Long = 45L) {
+        views.forEachIndexed { index, view ->
+            val delay = getStaggerDelay(index, baseDelayMs)
+            view.alpha = 0f
+            view.translationY = 12f
+            view.postDelayed({
+                SpringAnimation(view, DynamicAnimation.TRANSLATION_Y, 0f).apply {
+                    spring.stiffness = SPRING_STIFFNESS_SECONDARY
+                    spring.dampingRatio = SPRING_DAMPING_SECONDARY
+                }.start()
+                view.animate()
+                    .alpha(1f)
+                    .setDuration(DURATION_ELEMENT)
+                    .setInterpolator(DecelerateInterpolator())
+                    .start()
+            }, delay)
+        }
+    }
+
+    // ── Alpha transition (system-initiated, easeOut) ───────────────────────────
+    // Rule: system-initiated transitions use easeOut, not spring.
+    fun animateAlphaTransition(view: View, targetAlpha: Float) {
+        view.animate()
+            .alpha(targetAlpha)
+            .setDuration(DURATION_ELEMENT)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+    }
+
+    // ── Haptic feedback ────────────────────────────────────────────────────────
+    // Rule: haptic fires at visual peak, not before/after.
+    //       Budget: ≤4 haptic events per user flow.
     @Suppress("InlinedApi")
     fun hapticFeedback(view: View, weight: HapticWeight) {
-        val feedbackConstant = when (weight) {
-            HapticWeight.LIGHT -> HapticFeedbackConstants.KEYBOARD_TAP
+        val constant = when (weight) {
+            HapticWeight.LIGHT  -> HapticFeedbackConstants.KEYBOARD_TAP
             HapticWeight.MEDIUM -> HapticFeedbackConstants.KEYBOARD_PRESS
-            HapticWeight.HEAVY -> HapticFeedbackConstants.LONG_PRESS
+            HapticWeight.HEAVY  -> HapticFeedbackConstants.LONG_PRESS
         }
-        view.performHapticFeedback(feedbackConstant)
+        view.performHapticFeedback(constant)
     }
 
     enum class HapticWeight {
