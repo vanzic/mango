@@ -1,0 +1,11 @@
+<resources>
+    <color name="mango_background">#0A0A0A</color>
+    <color name="mango_surface">#141414</color>
+    <color name="mango_surface_elevated">#1E1E1E</color>
+    <color name="mango_idle">#1A1A1A</color>
+    <color name="mango_active">#FF3B30</color>
+    <color name="mango_dot_ready">#34C759</color>
+    <color name="mango_text_primary">#FFFFFF</color>
+    <color name="mango_text_secondary">#8E8E93</color>
+    <color name="mango_accent">#FF9500</color>
+</resources>

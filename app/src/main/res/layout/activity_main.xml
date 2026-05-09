@@ -1,0 +1,293 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal"
+    android:background="@color/mango_background">
+
+    <!-- LEFT: Camera Preview (55%) -->
+    <TextureView
+        android:id="@+id/textureView"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="55" />
+
+    <!-- RIGHT: Control Panel (45%) -->
+    <ScrollView
+        android:id="@+id/controlPanel"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="45"
+        android:background="@color/mango_surface"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="24dp"
+        android:paddingBottom="24dp"
+        android:clipToPadding="false">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center_horizontal">
+
+            <!-- STATUS CHIP -->
+            <LinearLayout
+                android:id="@+id/statusChip"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="@color/mango_surface_elevated"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp"
+                android:layout_marginBottom="28dp">
+
+                <View
+                    android:id="@+id/vStatusDot"
+                    android:layout_width="10dp"
+                    android:layout_height="10dp"
+                    android:background="@color/mango_dot_ready"
+                    android:layout_marginEnd="8dp" />
+
+                <TextView
+                    android:id="@+id/tvStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="IDLE"
+                    android:textColor="@color/mango_text_primary"
+                    android:textSize="13sp"
+                    android:letterSpacing="0.1"
+                    android:fontFamily="monospace" />
+
+            </LinearLayout>
+
+            <!-- QUALITY LABEL -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="QUALITY"
+                android:textColor="@color/mango_text_secondary"
+                android:textSize="11sp"
+                android:letterSpacing="0.15"
+                android:layout_marginBottom="10dp" />
+
+            <!-- QUALITY SELECTOR -->
+            <LinearLayout
+                android:id="@+id/qualitySelector"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="24dp">
+
+                <TextView
+                    android:id="@+id/chip720p"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="720p"
+                    android:textColor="@color/mango_text_primary"
+                    android:textSize="13sp"
+                    android:background="@color/mango_accent"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/chip1080p"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="1080p"
+                    android:textColor="@color/mango_text_secondary"
+                    android:textSize="13sp"
+                    android:background="@color/mango_surface_elevated"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/chip4k"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="4K"
+                    android:textColor="@color/mango_text_secondary"
+                    android:textSize="13sp"
+                    android:background="@color/mango_surface_elevated" />
+
+            </LinearLayout>
+
+            <!-- FPS LABEL -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="FRAME RATE"
+                android:textColor="@color/mango_text_secondary"
+                android:textSize="11sp"
+                android:letterSpacing="0.15"
+                android:layout_marginBottom="10dp" />
+
+            <!-- FPS SELECTOR -->
+            <LinearLayout
+                android:id="@+id/fpsSelector"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="24dp">
+
+                <TextView
+                    android:id="@+id/chip24fps"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="24"
+                    android:textColor="@color/mango_text_secondary"
+                    android:textSize="13sp"
+                    android:background="@color/mango_surface_elevated"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/chip30fps"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="30"
+                    android:textColor="@color/mango_text_primary"
+                    android:textSize="13sp"
+                    android:background="@color/mango_accent"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/chip60fps"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="60"
+                    android:textColor="@color/mango_text_secondary"
+                    android:textSize="13sp"
+                    android:background="@color/mango_surface_elevated" />
+
+            </LinearLayout>
+
+            <!-- ASPECT RATIO LABEL -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="ASPECT RATIO"
+                android:textColor="@color/mango_text_secondary"
+                android:textSize="11sp"
+                android:letterSpacing="0.15"
+                android:layout_marginBottom="10dp" />
+
+            <!-- ASPECT RATIO SELECTOR -->
+            <LinearLayout
+                android:id="@+id/aspectRatioSelector"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="24dp">
+
+                <TextView
+                    android:id="@+id/chipAspect16_9"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="16:9"
+                    android:textColor="@color/mango_text_primary"
+                    android:textSize="12sp"
+                    android:background="@color/mango_accent"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/chipAspect4_3"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="4:3"
+                    android:textColor="@color/mango_text_secondary"
+                    android:textSize="12sp"
+                    android:background="@color/mango_surface_elevated"
+                    android:layout_marginEnd="4dp" />
+
+                <TextView
+                    android:id="@+id/chipAspect1_1"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="1:1"
+                    android:textColor="@color/mango_text_secondary"
+                    android:textSize="12sp"
+                    android:background="@color/mango_surface_elevated"/>
+
+            </LinearLayout>
+
+            <!-- DURATION LABEL -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="10dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="CLIP DURATION"
+                    android:textColor="@color/mango_text_secondary"
+                    android:textSize="11sp"
+                    android:letterSpacing="0.15" />
+
+                <TextView
+                    android:id="@+id/tvDurationValue"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="10 min"
+                    android:textColor="@color/mango_accent"
+                    android:textSize="11sp" />
+
+            </LinearLayout>
+
+            <!-- DURATION SLIDER -->
+            <SeekBar
+                android:id="@+id/seekDuration"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="133"
+                android:progress="10"
+                android:layout_marginBottom="24dp" />
+
+            <!-- FILE SIZE ESTIMATE -->
+            <TextView
+                android:id="@+id/tvFileSizeEstimate"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="≈ 150 MB / clip"
+                android:textColor="@color/mango_text_secondary"
+                android:textSize="12sp"
+                android:gravity="center"
+                android:layout_marginBottom="32dp" />
+
+            <!-- START/STOP BUTTON -->
+            <TextView
+                android:id="@+id/btnToggleRecording"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:gravity="center"
+                android:text="Start Recording"
+                android:textColor="@color/mango_text_primary"
+                android:textSize="15sp"
+                android:background="@color/mango_idle" />
+
+        </LinearLayout>
+    </ScrollView>
+
+</LinearLayout>
