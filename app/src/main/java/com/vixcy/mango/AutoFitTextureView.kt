@@ -41,7 +41,9 @@ class AutoFitTextureView @JvmOverloads constructor(
         if (0 == ratioWidth || ratioHeight == 0) {
             setMeasuredDimension(width, height)
         } else {
-            if (width < height * ratioWidth / ratioHeight) {
+            // Scale to FILL (Center Crop) logic:
+            // We want the view to be at least as big as the measured bounds in both dimensions.
+            if (width > height * ratioWidth / ratioHeight) {
                 setMeasuredDimension(width, width * ratioHeight / ratioWidth)
             } else {
                 setMeasuredDimension(height * ratioWidth / ratioHeight, height)

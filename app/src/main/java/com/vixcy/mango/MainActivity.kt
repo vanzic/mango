@@ -824,10 +824,12 @@ class MainActivity : AppCompatActivity() {
             textureView.width, textureView.height, portraitHeight, portraitWidth, largest)
 
         // Set the aspect ratio of the AutoFitTextureView
-        // We use portraitHeight and portraitWidth (e.g. 1280 and 720) because
-        // in portrait mode, height is the long side.
+        // We use the ACTUAL hardware size to ensure zero distortion.
         textureView.post {
-            textureView.setAspectRatio(portraitWidth, portraitHeight)
+            previewSize?.let {
+                // Buffer is landscape, View is portrait, so swap dimensions
+                textureView.setAspectRatio(it.height, it.width)
+            }
         }
     }
 
