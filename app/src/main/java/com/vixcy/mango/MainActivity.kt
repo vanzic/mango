@@ -26,9 +26,15 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
+import android.view.ViewGroup.MarginLayoutParams
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.doOnLayout
+import androidx.core.view.updateLayoutParams
+import androidx.core.view.updatePadding
 import androidx.dynamicanimation.animation.DynamicAnimation
 import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.work.WorkInfo
@@ -56,6 +62,7 @@ class MainActivity : AppCompatActivity() {
     private var isCurrentlyUploading = false
 
     // ── Bottom panel ──────────────────────────────────────────────────────────
+    private lateinit var bottomPanel: LinearLayout
     private lateinit var tvSummaryQuality: TextView
     private lateinit var tvSummaryFps: TextView
     private lateinit var tvSummaryDuration: TextView
@@ -75,6 +82,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvLabelDuration: TextView
     private lateinit var tvDurationValue: TextView
     private lateinit var tvFileSizeEstimate: TextView
+    private lateinit var tvFileSizeEstimateMain: TextView
     private lateinit var seekDuration: SeekBar
 
     // ── Upload state guards ────────────────────────────────────────────────────
@@ -108,6 +116,7 @@ class MainActivity : AppCompatActivity() {
     // ── Camera ─────────────────────────────────────────────────────────────────
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
+    private var sensorOrientation = 90
     private lateinit var cameraThread: HandlerThread
     private lateinit var cameraHandler: Handler
 
@@ -150,6 +159,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         bindViews()
+        setupEdgeToEdge()
         requestPermissions()
         computeAndUpdateDimensions()
         restoreState()
@@ -198,6 +208,7 @@ class MainActivity : AppCompatActivity() {
         vUploadOverlayDot    = findViewById(R.id.vUploadOverlayDot)
         tvUploadOverlayStatus = findViewById(R.id.tvUploadOverlayStatus)
 
+        bottomPanel          = findViewById(R.id.bottomPanel)
         tvSummaryQuality     = findViewById(R.id.tvSummaryQuality)
         tvSummaryFps         = findViewById(R.id.tvSummaryFps)
         tvSummaryDuration    = findViewById(R.id.tvSummaryDuration)
@@ -213,10 +224,31 @@ class MainActivity : AppCompatActivity() {
         tvLabelDuration      = findViewById(R.id.tvLabelDuration)
         tvDurationValue      = findViewById(R.id.tvDurationValue)
         tvFileSizeEstimate   = findViewById(R.id.tvFileSizeEstimate)
+        tvFileSizeEstimateMain = findViewById(R.id.tvFileSizeEstimateMain)
         seekDuration         = findViewById(R.id.seekDuration)
 
         // Programmatic circle shape — color animates accent ↔ active
         btnToggleRecording.background = btnRecordDrawable
+    }
+
+    private fun setupEdgeToEdge() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { _, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+
+            // Status pill top margin: system bar height + 24dp base margin
+            // Increased from 16dp to 24dp to provide better clearance from the notch/status bar.
+            statusOverlayPill.updateLayoutParams<MarginLayoutParams> {
+                topMargin = systemBars.top + (24 * resources.displayMetrics.density).toInt()
+            }
+
+            // Bottom panel padding: keep original 16dp top, but add system bar bottom to original 32dp
+            bottomPanel.updatePadding(
+                bottom = systemBars.bottom + (32 * resources.displayMetrics.density).toInt()
+            )
+
+            insets
+        }
     }
 
     private fun restoreState() {
@@ -425,12 +457,21 @@ class MainActivity : AppCompatActivity() {
 
         if (animate && lastEstimatedSizeMb > 0) {
             fileSizeAnimator?.cancel()
-            fileSizeAnimator = AnimationUtils.animateValueChange(
-                tvFileSizeEstimate, lastEstimatedSizeMb, sizeMb,
-                formatValue = { mb -> formatClipSize(mb) }
-            )
+            fileSizeAnimator = ValueAnimator.ofInt(lastEstimatedSizeMb, sizeMb).apply {
+                duration = 480L
+                interpolator = DecelerateInterpolator()
+                addUpdateListener {
+                    val v = it.animatedValue as Int
+                    val formatted = formatClipSize(v)
+                    tvFileSizeEstimate.text = formatted
+                    tvFileSizeEstimateMain.text = formatted
+                }
+                start()
+            }
         } else {
-            tvFileSizeEstimate.text = formatClipSize(sizeMb)
+            val formatted = formatClipSize(sizeMb)
+            tvFileSizeEstimate.text = formatted
+            tvFileSizeEstimateMain.text = formatted
         }
         lastEstimatedSizeMb = sizeMb
     }
@@ -737,8 +778,11 @@ class MainActivity : AppCompatActivity() {
 
         val manager  = getSystemService(CAMERA_SERVICE) as CameraManager
         val cameraId = manager.cameraIdList.first { id ->
-            manager.getCameraCharacteristics(id)
-                .get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+            val char = manager.getCameraCharacteristics(id)
+            if (char.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK) {
+                sensorOrientation = char.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
+                true
+            } else false
         }
 
         if (textureView.isAvailable) {
@@ -773,6 +817,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun startPreviewSession(camera: CameraDevice) {
         val texture = textureView.surfaceTexture ?: return
+        // Set buffer size to the CAMERA's native landscape dimensions.
+        // We will rotate this buffer in the TextureView's matrix.
         texture.setDefaultBufferSize(selectedWidth, selectedHeight)
         val surface = Surface(texture)
 
@@ -795,15 +841,7 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * Corrects the TextureView transform for portrait-locked orientation.
-     *
-     * The back camera sensor is physically mounted at 90° (SENSOR_ORIENTATION = 90).
-     * In portrait mode (ROTATION_0) the raw sensor frame appears rotated 90° — we
-     * must rotate it back and scale to fill the portrait TextureView.
-     *
-     * For a portrait view (viewH > viewW) receiving a landscape sensor frame
-     * (selectedWidth × selectedHeight, e.g. 1280 × 720):
-     *   1. Rotate -90° around the centre
-     *   2. Scale uniformly so the rotated frame fills the view (crop-to-fill)
+     * Uses the hardware sensor orientation and a precise 'Center Crop' scale.
      */
     private fun configurePreviewTransform() {
         val viewW = textureView.width.toFloat()
@@ -811,14 +849,33 @@ class MainActivity : AppCompatActivity() {
         if (viewW == 0f || viewH == 0f) return
 
         val matrix = android.graphics.Matrix()
-        val cx = viewW / 2f
-        val cy = viewH / 2f
+        val centerX = viewW / 2f
+        val centerY = viewH / 2f
 
-        matrix.postRotate(-90f, cx, cy)
+        // 1. Calculate the rotation required to bring the sensor's top to the screen's top.
+        // For a portrait app (ROTATION_0) and a standard back sensor (90), this is 90.
+        val rotation = windowManager.defaultDisplay.rotation
+        val degrees = when (rotation) {
+            Surface.ROTATION_0 -> 0
+            Surface.ROTATION_90 -> 90
+            Surface.ROTATION_180 -> 180
+            Surface.ROTATION_270 -> 270
+            else -> 0
+        }
+        val totalRotation = (sensorOrientation - degrees + 360) % 360
+        matrix.postRotate(totalRotation.toFloat(), centerX, centerY)
 
-        // rotatedFrameW = selectedHeight, rotatedFrameH = selectedWidth
-        val scale = maxOf(viewW / selectedHeight, viewH / selectedWidth)
-        matrix.postScale(scale, scale, cx, cy)
+        // 2. Calculate scale to fill (Center Crop).
+        // If we rotated 90 or 270, the buffer's width/height are effectively swapped.
+        val isRotated = (totalRotation == 90 || totalRotation == 270)
+        val bufferW = if (isRotated) selectedHeight.toFloat() else selectedWidth.toFloat()
+        val bufferH = if (isRotated) selectedWidth.toFloat() else selectedHeight.toFloat()
+
+        val scaleX = viewW / bufferW
+        val scaleY = viewH / bufferH
+        val scale = maxOf(scaleX, scaleY)
+        
+        matrix.postScale(scale, scale, centerX, centerY)
 
         textureView.setTransform(matrix)
     }
