@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Background for the setting summary chips (720p • 30 fps • 10 min). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#2C2C2E" />
+    <corners android:radius="20dp" />
+</shape>

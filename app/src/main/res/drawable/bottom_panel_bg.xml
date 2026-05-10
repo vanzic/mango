@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Solid black bottom panel with rounded top corners — mirrors iOS camera bottom bar. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#000000" />
+    <corners android:topLeftRadius="20dp" android:topRightRadius="20dp" />
+</shape>
