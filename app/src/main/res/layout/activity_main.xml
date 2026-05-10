@@ -21,8 +21,8 @@
     android:background="@android:color/black">
 
     <!-- ══ LAYER 0 — Camera viewfinder (above bottom panel) ════════════════ -->
-    <com.vixcy.mango.AutoFitTextureView
-        android:id="@+id/textureView"
+    <com.vixcy.mango.AutoFitSurfaceView
+        android:id="@+id/surfaceView"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         app:layout_constraintTop_toTopOf="parent"
