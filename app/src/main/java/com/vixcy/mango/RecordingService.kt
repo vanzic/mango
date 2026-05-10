@@ -42,8 +42,8 @@ class RecordingService : Service() {
     private var currentFile: File? = null
 
     // Params
-    private var width = 1280
-    private var height = 720
+    private var width = 720
+    private var height = 1280
     private var bitrate = 2_000_000
     private var fps = 30
     private var chunkMs = 600_000L
@@ -58,8 +58,8 @@ class RecordingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                width    = intent.getIntExtra("width", 1280)
-                height   = intent.getIntExtra("height", 720)
+                width    = intent.getIntExtra("width", 720)
+                height   = intent.getIntExtra("height", 1280)
                 bitrate  = intent.getIntExtra("bitrate", 2_000_000)
                 fps      = intent.getIntExtra("fps", 30)
                 chunkMs  = intent.getLongExtra("chunk_ms", 600_000L)
@@ -163,15 +163,32 @@ class RecordingService : Service() {
         val file = createOutputFile()
         currentFile = file
 
+        // 1. Determine correct video size based on the hardware sensor orientation
+        val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val cameraId = manager.cameraIdList.firstOrNull { id ->
+            manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+        } ?: return
+        
+        val sensorOrientation = manager.getCameraCharacteristics(cameraId).get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
+        val isPortraitSensor = sensorOrientation == 0 || sensorOrientation == 180
+        
+        // MediaRecorder MUST be configured with the sensor's native dimensions to avoid squashing.
+        // width=720, height=1280 (passed from MainActivity).
+        val videoW = if (isPortraitSensor) width else height // e.g. 1280 for a 90-deg sensor
+        val videoH = if (isPortraitSensor) height else width // e.g. 720  for a 90-deg sensor
+
         val recorder = MediaRecorder(this).apply {
             setAudioSource(MediaRecorder.AudioSource.MIC)
             setVideoSource(MediaRecorder.VideoSource.SURFACE)
             setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             setVideoEncoder(MediaRecorder.VideoEncoder.H264)
             setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            setVideoSize(width, height)
+            // 2. Use native sensor dimensions to prevent hardware squashing
+            setVideoSize(videoW, videoH) 
             setVideoFrameRate(fps)
             setVideoEncodingBitRate(bitrate)
+            // 3. Tell the MP4 container to rotate the video on playback
+            setOrientationHint(sensorOrientation) 
             setOutputFile(file.absolutePath)
             prepare()
         }

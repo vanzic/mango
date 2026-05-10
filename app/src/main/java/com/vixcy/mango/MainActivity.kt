@@ -6,9 +6,14 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Matrix
+import android.graphics.RectF
+import android.graphics.SurfaceTexture
+import android.util.Size
+import java.util.Collections
+import java.util.Comparator
 import android.graphics.drawable.GradientDrawable
 import android.hardware.camera2.*
-import android.graphics.SurfaceTexture
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
@@ -19,6 +24,7 @@ import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
+import android.view.ViewGroup.MarginLayoutParams
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
@@ -26,7 +32,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
-import android.view.ViewGroup.MarginLayoutParams
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.view.ViewCompat
@@ -43,7 +48,7 @@ import androidx.work.WorkManager
 class MainActivity : AppCompatActivity() {
 
     // ── UI — camera area ───────────────────────────────────────────────────────
-    private lateinit var textureView: TextureView
+    private lateinit var textureView: AutoFitTextureView
     private lateinit var dimOverlay: View
 
     // ── Camera-overlay pills ───────────────────────────────────────────────────
@@ -117,14 +122,15 @@ class MainActivity : AppCompatActivity() {
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
     private var sensorOrientation = 90
+    private var previewSize: Size? = null
     private lateinit var cameraThread: HandlerThread
     private lateinit var cameraHandler: Handler
 
     // ── State ──────────────────────────────────────────────────────────────────
     private var isRecording = false
     private var baseVideoHeight  = 720
-    private var selectedWidth    = 1280
-    private var selectedHeight   = 720
+    private var portraitWidth    = 720
+    private var portraitHeight   = 1280
     private var selectedBitrate  = 2_000_000
     private var selectedFps      = 30
     private var selectedDurationMin = 10
@@ -395,13 +401,13 @@ class MainActivity : AppCompatActivity() {
     // ══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Derives selectedWidth/Height from the quality tier at native 16:9 aspect ratio.
-     * Width is rounded DOWN to the nearest even number (H.264 requirement).
+     * Derives portraitWidth/Height from the quality tier at native 9:16 aspect ratio.
+     * Height is rounded DOWN to the nearest even number (H.264 requirement).
      */
     private fun computeAndUpdateDimensions() {
-        selectedHeight = baseVideoHeight
-        val rawWidth   = baseVideoHeight * 16 / 9
-        selectedWidth  = if (rawWidth % 2 == 0) rawWidth else rawWidth - 1
+        portraitWidth = baseVideoHeight
+        val rawHeight = baseVideoHeight * 16 / 9
+        portraitHeight = if (rawHeight % 2 == 0) rawHeight else rawHeight - 1
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -535,8 +541,8 @@ class MainActivity : AppCompatActivity() {
 
             val intent = Intent(this, RecordingService::class.java).apply {
                 action = RecordingService.ACTION_START
-                putExtra("width",    selectedWidth)
-                putExtra("height",   selectedHeight)
+                putExtra("width",    portraitWidth)
+                putExtra("height",   portraitHeight)
                 putExtra("bitrate",  selectedBitrate)
                 putExtra("fps",      selectedFps)
                 putExtra("chunk_ms", selectedDurationMin * 60 * 1000L)
@@ -785,15 +791,18 @@ class MainActivity : AppCompatActivity() {
             } else false
         }
 
+        // Configure the preview size and AutoFitTextureView ratio
+        setupCameraOutputs(manager, cameraId)
+
         if (textureView.isAvailable) {
-            openCamera(manager, cameraId)
+            startCamera(manager, cameraId)
         } else {
             textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                 override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
-                    openCamera(manager, cameraId)
+                    startCamera(manager, cameraId)
                 }
                 override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
-                    configurePreviewTransform()
+                    configureTransform(w, h)
                 }
                 override fun onSurfaceTextureDestroyed(st: SurfaceTexture) = true
                 override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
@@ -801,83 +810,115 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun openCamera(manager: CameraManager, cameraId: String) {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-            != PackageManager.PERMISSION_GRANTED) return
+    private fun setupCameraOutputs(manager: CameraManager, cameraId: String) {
+        val chars = manager.getCameraCharacteristics(cameraId)
+        val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return
+        sensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
 
-        manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
-            override fun onOpened(camera: CameraDevice) {
-                cameraDevice = camera
-                startPreviewSession(camera)
+        // For still capture, we use the largest available size.
+        val largest = Collections.max(map.getOutputSizes(SurfaceTexture::class.java).toList(), CompareSizesByArea())
+
+        // Find the best preview size that matches our desired portraitHeight x portraitWidth
+        // Camera2 sensor is landscape, so we swap our portrait dimensions for the query
+        previewSize = chooseOptimalSize(map.getOutputSizes(SurfaceTexture::class.java),
+            textureView.width, textureView.height, portraitHeight, portraitWidth, largest)
+
+        // Set the aspect ratio of the AutoFitTextureView
+        // We use portraitHeight and portraitWidth (e.g. 1280 and 720) because
+        // in portrait mode, height is the long side.
+        textureView.post {
+            textureView.setAspectRatio(portraitWidth, portraitHeight)
+        }
+    }
+
+    private fun startCamera(manager: CameraManager, cameraId: String) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) return
+        try {
+            manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
+                override fun onOpened(camera: CameraDevice) {
+                    cameraDevice = camera
+                    startSession(camera)
+                }
+                override fun onDisconnected(camera: CameraDevice) { camera.close() }
+                override fun onError(camera: CameraDevice, error: Int) { camera.close() }
+            }, cameraHandler)
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    private fun startSession(camera: CameraDevice) {
+        val texture = textureView.surfaceTexture ?: return
+        
+        // Use the hardware-negotiated preview size
+        val size = previewSize ?: Size(portraitHeight, portraitWidth)
+        texture.setDefaultBufferSize(size.width, size.height) 
+        
+        val surface = Surface(texture)
+        camera.createCaptureSession(listOf(surface), object : CameraCaptureSession.StateCallback() {
+            override fun onConfigured(session: CameraCaptureSession) {
+                captureSession = session
+                val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                    addTarget(surface)
+                    set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(selectedFps, selectedFps))
+                }.build()
+                session.setRepeatingRequest(request, null, cameraHandler)
+                
+                runOnUiThread { configureTransform(textureView.width, textureView.height) }
             }
-            override fun onDisconnected(camera: CameraDevice) { camera.close() }
-            override fun onError(camera: CameraDevice, error: Int) { camera.close() }
+            override fun onConfigureFailed(session: CameraCaptureSession) {}
         }, cameraHandler)
     }
 
-    private fun startPreviewSession(camera: CameraDevice) {
-        val texture = textureView.surfaceTexture ?: return
-        // Set buffer size to the CAMERA's native landscape dimensions.
-        // We will rotate this buffer in the TextureView's matrix.
-        texture.setDefaultBufferSize(selectedWidth, selectedHeight)
-        val surface = Surface(texture)
-
-        camera.createCaptureSession(listOf(surface),
-            object : CameraCaptureSession.StateCallback() {
-                override fun onConfigured(session: CameraCaptureSession) {
-                    captureSession = session
-                    val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-                        .apply {
-                            addTarget(surface)
-                            set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
-                                Range(selectedFps, selectedFps))
-                        }.build()
-                    session.setRepeatingRequest(request, null, cameraHandler)
-                    runOnUiThread { configurePreviewTransform() }
-                }
-                override fun onConfigureFailed(session: CameraCaptureSession) {}
-            }, cameraHandler)
+    /**
+     * Standard Camera2 transformation logic for portrait-locked apps.
+     */
+    private fun configureTransform(viewWidth: Int, viewHeight: Int) {
+        if (viewWidth == 0 || viewHeight == 0 || previewSize == null) return
+        val rotation = windowManager.defaultDisplay.rotation
+        val matrix = Matrix()
+        val viewRect = RectF(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat())
+        val bufferRect = RectF(0f, 0f, previewSize!!.height.toFloat(), previewSize!!.width.toFloat())
+        val centerX = viewRect.centerX()
+        val centerY = viewRect.centerY()
+        
+        if (Surface.ROTATION_90 == rotation || Surface.ROTATION_270 == rotation) {
+            bufferRect.offset(centerX - bufferRect.centerX(), centerY - bufferRect.centerY())
+            matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL)
+            val scale = maxOf(viewHeight.toFloat() / previewSize!!.height, viewWidth.toFloat() / previewSize!!.width)
+            matrix.postScale(scale, scale, centerX, centerY)
+            matrix.postRotate((90 * (rotation - 2)).toFloat(), centerX, centerY)
+        } else if (Surface.ROTATION_180 == rotation) {
+            matrix.postRotate(180f, centerX, centerY)
+        }
+        textureView.setTransform(matrix)
     }
 
-    /**
-     * Corrects the TextureView transform for portrait-locked orientation.
-     * Uses the hardware sensor orientation and a precise 'Center Crop' scale.
-     */
-    private fun configurePreviewTransform() {
-        val viewW = textureView.width.toFloat()
-        val viewH = textureView.height.toFloat()
-        if (viewW == 0f || viewH == 0f) return
-
-        val matrix = android.graphics.Matrix()
-        val centerX = viewW / 2f
-        val centerY = viewH / 2f
-
-        // 1. Calculate the rotation required to bring the sensor's top to the screen's top.
-        // For a portrait app (ROTATION_0) and a standard back sensor (90), this is 90.
-        val rotation = windowManager.defaultDisplay.rotation
-        val degrees = when (rotation) {
-            Surface.ROTATION_0 -> 0
-            Surface.ROTATION_90 -> 90
-            Surface.ROTATION_180 -> 180
-            Surface.ROTATION_270 -> 270
-            else -> 0
+    private fun chooseOptimalSize(choices: Array<Size>, textureViewWidth: Int,
+                                 textureViewHeight: Int, maxWidth: Int, maxHeight: Int, aspectRatio: Size): Size {
+        val bigEnough = ArrayList<Size>()
+        val notBigEnough = ArrayList<Size>()
+        val w = aspectRatio.width
+        val h = aspectRatio.height
+        for (option in choices) {
+            if (option.width <= maxWidth && option.height <= maxHeight &&
+                option.height == option.width * h / w) {
+                if (option.width >= textureViewWidth && option.height >= textureViewHeight) {
+                    bigEnough.add(option)
+                } else {
+                    notBigEnough.add(option)
+                }
+            }
         }
-        val totalRotation = (sensorOrientation - degrees + 360) % 360
-        matrix.postRotate(totalRotation.toFloat(), centerX, centerY)
+        return when {
+            bigEnough.size > 0 -> Collections.min(bigEnough, CompareSizesByArea())
+            notBigEnough.size > 0 -> Collections.max(notBigEnough, CompareSizesByArea())
+            else -> choices[0]
+        }
+    }
 
-        // 2. Calculate scale to fill (Center Crop).
-        // If we rotated 90 or 270, the buffer's width/height are effectively swapped.
-        val isRotated = (totalRotation == 90 || totalRotation == 270)
-        val bufferW = if (isRotated) selectedHeight.toFloat() else selectedWidth.toFloat()
-        val bufferH = if (isRotated) selectedWidth.toFloat() else selectedHeight.toFloat()
-
-        val scaleX = viewW / bufferW
-        val scaleY = viewH / bufferH
-        val scale = maxOf(scaleX, scaleY)
-        
-        matrix.postScale(scale, scale, centerX, centerY)
-
-        textureView.setTransform(matrix)
+    private class CompareSizesByArea : Comparator<Size> {
+        override fun compare(lhs: Size, rhs: Size): Int {
+            return java.lang.Long.signum(lhs.width.toLong() * lhs.height - rhs.width.toLong() * rhs.height)
+        }
     }
 
     private fun closePreviewCamera(onClosed: () -> Unit) {

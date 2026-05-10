@@ -13,8 +13,8 @@ class BootReceiver : BroadcastReceiver() {
         val isActive = prefs.getBoolean("recording_active", false)
         if (!isActive) return
 
-        val width    = prefs.getInt("video_width", 1280)
-        val height   = prefs.getInt("video_height", 720)
+        val width    = prefs.getInt("video_width", 720)
+        val height   = prefs.getInt("video_height", 1280)
         val bitrate  = prefs.getInt("video_bitrate", 2_000_000)
         val fps      = prefs.getInt("video_fps", 30)
         val chunkMs  = prefs.getLong("chunk_duration_ms", 600_000L)
