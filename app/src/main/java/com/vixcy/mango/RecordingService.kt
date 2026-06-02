@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Rect
 import android.hardware.camera2.*
 import android.media.MediaRecorder
 import android.os.Handler
@@ -47,6 +48,8 @@ class RecordingService : Service() {
     private var bitrate = 2_000_000
     private var fps = 30
     private var chunkMs = 600_000L
+    private var aspectW = 16
+    private var aspectH = 9
 
     // State
     private var isRecording = false
@@ -63,6 +66,8 @@ class RecordingService : Service() {
                 bitrate  = intent.getIntExtra("bitrate", 2_000_000)
                 fps      = intent.getIntExtra("fps", 30)
                 chunkMs  = intent.getLongExtra("chunk_ms", 600_000L)
+                aspectW  = intent.getIntExtra("aspect_w", 16)
+                aspectH  = intent.getIntExtra("aspect_h", 9)
                 savePrefs(true)
                 startForegroundNotification()
                 scheduleWatchdog()
@@ -194,15 +199,26 @@ class RecordingService : Service() {
         }
         mediaRecorder = recorder
 
-        val surface = recorder.surface
+        val recordingSurface = recorder.surface
+        val previewSurface = PreviewSurfaceHolder.surface?.takeIf { it.isValid }
+        val surfaces = buildList {
+            add(recordingSurface)
+            previewSurface?.let { add(it) }
+        }
         cameraDevice?.createCaptureSession(
-            listOf(surface),
+            surfaces,
             object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) {
                     captureSession = session
                     val request = cameraDevice!!
                         .createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
-                        .apply { addTarget(surface) }
+                        .apply {
+                            addTarget(recordingSurface)
+                            previewSurface?.let { addTarget(it) }
+                            buildCropRegion(manager, cameraId)?.let {
+                                set(CaptureRequest.SCALER_CROP_REGION, it)
+                            }
+                        }
                         .build()
                     session.setRepeatingRequest(request, null, cameraHandler)
                     recorder.start()
@@ -306,6 +322,31 @@ class RecordingService : Service() {
 
     // ── Helpers ────────────────────────────────────────────────────────────────
 
+    private fun buildCropRegion(manager: CameraManager, cameraId: String): Rect? = try {
+        val activeArray = manager.getCameraCharacteristics(cameraId)
+            .get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return null
+        val targetRatio = aspectW.coerceAtLeast(1).toFloat() / aspectH.coerceAtLeast(1).toFloat()
+        centeredCrop(activeArray, targetRatio)
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun centeredCrop(activeArray: Rect, targetRatio: Float): Rect {
+        val sensorWidth = activeArray.width()
+        val sensorHeight = activeArray.height()
+        val sensorRatio = sensorWidth.toFloat() / sensorHeight.toFloat()
+
+        return if (sensorRatio > targetRatio) {
+            val cropWidth = (sensorHeight * targetRatio).toInt().coerceAtMost(sensorWidth)
+            val left = activeArray.left + (sensorWidth - cropWidth) / 2
+            Rect(left, activeArray.top, left + cropWidth, activeArray.bottom)
+        } else {
+            val cropHeight = (sensorWidth / targetRatio).toInt().coerceAtMost(sensorHeight)
+            val top = activeArray.top + (sensorHeight - cropHeight) / 2
+            Rect(activeArray.left, top, activeArray.right, top + cropHeight)
+        }
+    }
+
     private fun createOutputFile(): File {
         val dir = File(getExternalFilesDir(null), "MangoRecordings").also { it.mkdirs() }
         val ts = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
@@ -320,6 +361,8 @@ class RecordingService : Service() {
             putInt("video_bitrate", bitrate)
             putInt("video_fps", fps)
             putLong("chunk_duration_ms", chunkMs)
+            putInt("aspect_w", aspectW)
+            putInt("aspect_h", aspectH)
             apply()
         }
     }

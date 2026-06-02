@@ -21,6 +21,8 @@ class WatchdogReceiver : BroadcastReceiver() {
         val bitrate = prefs.getInt("video_bitrate", 2_000_000)
         val fps     = prefs.getInt("video_fps", 30)
         val chunkMs = prefs.getLong("chunk_duration_ms", 600_000L)
+        val aspectW = prefs.getInt("aspect_w", 16)
+        val aspectH = prefs.getInt("aspect_h", 9)
 
         val serviceIntent = Intent(context, RecordingService::class.java).apply {
             action = RecordingService.ACTION_START
@@ -29,6 +31,8 @@ class WatchdogReceiver : BroadcastReceiver() {
             putExtra("bitrate", bitrate)
             putExtra("fps", fps)
             putExtra("chunk_ms", chunkMs)
+            putExtra("aspect_w", aspectW)
+            putExtra("aspect_h", aspectH)
         }
         context.startForegroundService(serviceIntent)
     }

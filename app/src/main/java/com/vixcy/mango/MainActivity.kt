@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Matrix
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.SurfaceTexture
 import android.graphics.drawable.GradientDrawable
@@ -20,8 +21,7 @@ import android.util.Range
 import android.util.Size
 import android.view.MotionEvent
 import android.view.Surface
-import android.view.SurfaceHolder
-import android.view.SurfaceView
+import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup.MarginLayoutParams
 import android.view.WindowManager
@@ -49,7 +49,7 @@ import java.util.Comparator
 class MainActivity : AppCompatActivity() {
 
     // ── UI — camera area ───────────────────────────────────────────────────────
-    private lateinit var surfaceView: AutoFitSurfaceView
+    private lateinit var surfaceView: AutoFitTextureView
     private lateinit var dimOverlay: View
 
     // ── Camera-overlay pills ───────────────────────────────────────────────────
@@ -84,6 +84,7 @@ class MainActivity : AppCompatActivity() {
 
     // ── Settings-sheet controls ───────────────────────────────────────────────
     private lateinit var tvLabelQuality: TextView
+    private lateinit var tvLabelAspect: TextView
     private lateinit var tvLabelFrameRate: TextView
     private lateinit var tvLabelDuration: TextView
     private lateinit var tvDurationValue: TextView
@@ -98,6 +99,7 @@ class MainActivity : AppCompatActivity() {
 
     // ── Segmented controls ────────────────────────────────────────────────────
     private lateinit var qualityControl: SegmentedControl
+    private lateinit var aspectControl: SegmentedControl
     private lateinit var fpsControl: SegmentedControl
 
     // ── Recording timer ────────────────────────────────────────────────────────
@@ -122,6 +124,7 @@ class MainActivity : AppCompatActivity() {
     // ── Camera ─────────────────────────────────────────────────────────────────
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
+    private var previewSurface: Surface? = null
     private var sensorOrientation = 90
     private var previewSize: Size? = null
     private lateinit var cameraThread: HandlerThread
@@ -135,6 +138,7 @@ class MainActivity : AppCompatActivity() {
     private var selectedBitrate  = 2_000_000
     private var selectedFps      = 30
     private var selectedDurationMin = 10
+    private var selectedAspect = AspectRatio.R16_9
     private var lastEstimatedSizeMb = -1
     private var hasAnimatedFirstAppearance = false
 
@@ -156,6 +160,34 @@ class MainActivity : AppCompatActivity() {
         private const val BREATHING_REC_MS = 900L
     }
 
+    private enum class AspectRatio(val label: String, val sensorWidth: Int, val sensorHeight: Int) {
+        R16_9("16:9", 16, 9),
+        R4_3("4:3", 4, 3),
+        R1_1("1:1", 1, 1);
+
+        val index: Int
+            get() = when (this) {
+                R16_9 -> 0
+                R4_3 -> 1
+                R1_1 -> 2
+            }
+
+        val sensorRatio: Float
+            get() = sensorWidth.toFloat() / sensorHeight.toFloat()
+
+        companion object {
+            fun fromIndex(index: Int): AspectRatio = when (index) {
+                1 -> R4_3
+                2 -> R1_1
+                else -> R16_9
+            }
+
+            fun fromValues(width: Int, height: Int): AspectRatio = entries.firstOrNull {
+                it.sensorWidth == width && it.sensorHeight == height
+            } ?: R16_9
+        }
+    }
+
     // ══════════════════════════════════════════════════════════════════════════
     // Lifecycle
     // ══════════════════════════════════════════════════════════════════════════
@@ -168,8 +200,9 @@ class MainActivity : AppCompatActivity() {
         bindViews()
         setupEdgeToEdge()
         requestPermissions()
-        computeAndUpdateDimensions()
         restoreState()
+        computeAndUpdateDimensions()
+        setupAspectControl()
         setupQualityControl()
         setupFpsControl()
         setupDurationSlider()
@@ -226,6 +259,7 @@ class MainActivity : AppCompatActivity() {
         btnSettings          = findViewById(R.id.btnSettings)
         settingsSheet        = findViewById(R.id.settingsSheet)
 
+        tvLabelAspect        = findViewById(R.id.tvLabelAspect)
         tvLabelQuality       = findViewById(R.id.tvLabelQuality)
         tvLabelFrameRate     = findViewById(R.id.tvLabelFrameRate)
         tvLabelDuration      = findViewById(R.id.tvLabelDuration)
@@ -261,15 +295,13 @@ class MainActivity : AppCompatActivity() {
     private fun restoreState() {
         val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         isRecording = prefs.getBoolean("recording_active", false)
-        if (isRecording) {
-            surfaceView.visibility = View.INVISIBLE
-            surfaceView.alpha = 0f
-            uploadOverlayPill.alpha = 1f
-        } else {
-            surfaceView.visibility = View.VISIBLE
-            surfaceView.alpha = 1f
-            uploadOverlayPill.alpha = 0f
-        }
+        selectedAspect = AspectRatio.fromValues(
+            prefs.getInt("aspect_w", 16),
+            prefs.getInt("aspect_h", 9)
+        )
+        surfaceView.visibility = View.VISIBLE
+        surfaceView.alpha = 1f
+        uploadOverlayPill.alpha = if (isRecording) 1f else 0f
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -277,7 +309,8 @@ class MainActivity : AppCompatActivity() {
     // ══════════════════════════════════════════════════════════════════════════
 
     private fun updateSummaryChips() {
-        tvSummaryQuality.text  = when (baseVideoHeight) { 720 -> "720p"; 1080 -> "1080p"; else -> "4K" }
+        val quality = when (baseVideoHeight) { 720 -> "720p"; 1080 -> "1080p"; else -> "4K" }
+        tvSummaryQuality.text  = "$quality  ${selectedAspect.label}"
         tvSummaryFps.text      = "$selectedFps fps"
         tvSummaryDuration.text = "$selectedDurationMin min"
     }
@@ -332,6 +365,33 @@ class MainActivity : AppCompatActivity() {
     // ══════════════════════════════════════════════════════════════════════════
     // Segmented controls
     // ══════════════════════════════════════════════════════════════════════════
+
+    private fun setupAspectControl() {
+        aspectControl = SegmentedControl(
+            track    = findViewById(R.id.aspectSelector),
+            pill     = findViewById(R.id.aspectPill),
+            segments = listOf(
+                findViewById(R.id.seg16x9),
+                findViewById(R.id.seg4x3),
+                findViewById(R.id.seg1x1)
+            )
+        )
+        aspectControl.setup(selectedAspect.index) { index ->
+            val aspect = AspectRatio.fromIndex(index)
+            if (selectedAspect == aspect) return@setup
+            selectedAspect = aspect
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putInt("aspect_w", selectedAspect.sensorWidth)
+                .putInt("aspect_h", selectedAspect.sensorHeight)
+                .apply()
+            computeAndUpdateDimensions()
+            AnimationUtils.pulseLabel(tvLabelAspect)
+            updateFileSizeEstimate()
+            updateSummaryChips()
+            applyPreviewAspect()
+            if (!isRecording) closePreviewCamera { openPreviewCamera() }
+        }
+    }
 
     private fun setupQualityControl() {
         qualityControl = SegmentedControl(
@@ -402,13 +462,17 @@ class MainActivity : AppCompatActivity() {
     // ══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Derives portraitWidth/Height from the quality tier at native 9:16 aspect ratio.
+     * Derives portraitWidth/Height from the quality tier and selected portrait aspect.
      * Height is rounded DOWN to the nearest even number (H.264 requirement).
      */
     private fun computeAndUpdateDimensions() {
         portraitWidth = baseVideoHeight
-        val rawHeight = baseVideoHeight * 16 / 9
+        val rawHeight = baseVideoHeight * selectedAspect.sensorWidth / selectedAspect.sensorHeight
         portraitHeight = if (rawHeight % 2 == 0) rawHeight else rawHeight - 1
+    }
+
+    private fun applyPreviewAspect() {
+        surfaceView.setAspectRatio(portraitWidth, portraitHeight)
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -534,6 +598,8 @@ class MainActivity : AppCompatActivity() {
     // ══════════════════════════════════════════════════════════════════════════
 
     private fun startRecording() {
+        // Hand the live surface to RecordingService before releasing the camera
+        PreviewSurfaceHolder.surface = previewSurface?.takeIf { it.isValid }
         closePreviewCamera {
             recordingStartMs = SystemClock.elapsedRealtime()
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
@@ -547,33 +613,20 @@ class MainActivity : AppCompatActivity() {
                 putExtra("bitrate",  selectedBitrate)
                 putExtra("fps",      selectedFps)
                 putExtra("chunk_ms", selectedDurationMin * 60 * 1000L)
+                putExtra("aspect_w", selectedAspect.sensorWidth)
+                putExtra("aspect_h", selectedAspect.sensorHeight)
             }
             startForegroundService(intent)
-
-            surfaceView.animate()
-                .alpha(0f)
-                .setDuration(AnimationUtils.DURATION_SCREEN)
-                .setInterpolator(DecelerateInterpolator())
-                .withEndAction { surfaceView.visibility = View.INVISIBLE }
-                .start()
 
             setRecordingUI(true)
         }
     }
 
     private fun stopRecording() {
+        PreviewSurfaceHolder.surface = null
         startService(Intent(this, RecordingService::class.java).apply {
             action = RecordingService.ACTION_STOP
         })
-
-        surfaceView.alpha = 0f
-        surfaceView.visibility = View.VISIBLE
-        surfaceView.animate()
-            .alpha(1f)
-            .setDuration(AnimationUtils.DURATION_SCREEN)
-            .setInterpolator(DecelerateInterpolator())
-            .start()
-
         setRecordingUI(false)
         openPreviewCamera()
     }
@@ -663,6 +716,7 @@ class MainActivity : AppCompatActivity() {
     // ── Controls dim/enable ───────────────────────────────────────────────────
 
     private fun setControlsEnabled(enabled: Boolean) {
+        aspectControl.setEnabled(enabled)
         qualityControl.setEnabled(enabled)
         fpsControl.setEnabled(enabled)
         seekDuration.isEnabled = enabled
@@ -775,7 +829,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // Camera Preview (High-Performance SurfaceView)
+    // Camera Preview
     // ══════════════════════════════════════════════════════════════════════════
 
     private fun openPreviewCamera() {
@@ -790,17 +844,26 @@ class MainActivity : AppCompatActivity() {
 
         setupCameraOutputs(manager, cameraId)
 
-        surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
-            override fun surfaceCreated(holder: SurfaceHolder) {
+        surfaceView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
+                configureTransform(width, height)
                 startCamera(manager, cameraId)
             }
-            override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {}
-            override fun surfaceDestroyed(holder: SurfaceHolder) {
-                closePreviewCamera {}
+            override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {
+                configureTransform(width, height)
             }
-        })
+            override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                if (isRecording) return false
+                closePreviewCamera {}
+                previewSurface?.release()
+                previewSurface = null
+                return true
+            }
+            override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
+        }
         
-        if (surfaceView.holder.surface.isValid) {
+        if (surfaceView.isAvailable) {
+            configureTransform(surfaceView.width, surfaceView.height)
             startCamera(manager, cameraId)
         }
     }
@@ -810,17 +873,21 @@ class MainActivity : AppCompatActivity() {
         val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return
         sensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
 
-        val largest = Collections.max(map.getOutputSizes(SurfaceHolder::class.java).toList(), CompareSizesByArea())
+        val previewChoices = map.getOutputSizes(SurfaceTexture::class.java)
 
         // Find the best preview size that matches our desired portraitHeight x portraitWidth
-        previewSize = chooseOptimalSize(map.getOutputSizes(SurfaceHolder::class.java),
-            surfaceView.width, surfaceView.height, portraitHeight, portraitWidth, largest)
+        previewSize = chooseOptimalSize(
+            previewChoices,
+            surfaceView.width,
+            surfaceView.height,
+            portraitHeight,
+            portraitWidth,
+            Size(portraitHeight, portraitWidth)
+        )
 
         surfaceView.post {
-            previewSize?.let {
-                // SurfaceView handles orientation natively, but we set the ratio to prevent warping
-                surfaceView.setAspectRatio(it.height, it.width)
-            }
+            applyPreviewAspect()
+            configureTransform(surfaceView.width, surfaceView.height)
         }
     }
 
@@ -839,18 +906,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startSession(camera: CameraDevice) {
-        val surface = surfaceView.holder.surface
-        if (!surface.isValid) return
+        val texture = surfaceView.surfaceTexture ?: return
         
         // Negotiated size from hardware
         val size = previewSize ?: Size(portraitHeight, portraitWidth)
-        surfaceView.holder.setFixedSize(size.width, size.height)
+        texture.setDefaultBufferSize(size.width, size.height)
+        val surface = previewSurface ?: Surface(texture).also { previewSurface = it }
+        configureTransform(surfaceView.width, surfaceView.height)
 
         camera.createCaptureSession(listOf(surface), object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(session: CameraCaptureSession) {
                 captureSession = session
                 val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                     addTarget(surface)
+                    buildCropRegion()?.let {
+                        set(CaptureRequest.SCALER_CROP_REGION, it)
+                    }
                     // PERFORMANCE TUNING: Enforce strict 60fps and Performance Mode
                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(selectedFps, selectedFps))
                     set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
@@ -860,6 +931,62 @@ class MainActivity : AppCompatActivity() {
             }
             override fun onConfigureFailed(session: CameraCaptureSession) {}
         }, cameraHandler)
+    }
+
+    private fun configureTransform(viewWidth: Int, viewHeight: Int) {
+        val size = previewSize ?: return
+        if (viewWidth == 0 || viewHeight == 0) return
+
+        val rotation = windowManager.defaultDisplay.rotation
+        val matrix = Matrix()
+        val viewRect = RectF(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat())
+        val bufferRect = RectF(0f, 0f, size.height.toFloat(), size.width.toFloat())
+        val centerX = viewRect.centerX()
+        val centerY = viewRect.centerY()
+
+        if (rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270) {
+            bufferRect.offset(centerX - bufferRect.centerX(), centerY - bufferRect.centerY())
+            matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL)
+            val scale = maxOf(
+                viewHeight.toFloat() / size.height,
+                viewWidth.toFloat() / size.width
+            )
+            matrix.postScale(scale, scale, centerX, centerY)
+            matrix.postRotate((90 * (rotation - 2)).toFloat(), centerX, centerY)
+        } else if (rotation == Surface.ROTATION_180) {
+            matrix.postRotate(180f, centerX, centerY)
+        }
+
+        surfaceView.setTransform(matrix)
+    }
+
+    private fun buildCropRegion(): Rect? = try {
+        val manager = getSystemService(CAMERA_SERVICE) as CameraManager
+        val cameraId = manager.cameraIdList.firstOrNull { id ->
+            manager.getCameraCharacteristics(id)
+                .get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+        } ?: return null
+        val activeArray = manager.getCameraCharacteristics(cameraId)
+            .get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return null
+        centeredCrop(activeArray, selectedAspect.sensorRatio)
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun centeredCrop(activeArray: Rect, targetRatio: Float): Rect {
+        val sensorWidth = activeArray.width()
+        val sensorHeight = activeArray.height()
+        val sensorRatio = sensorWidth.toFloat() / sensorHeight.toFloat()
+
+        return if (sensorRatio > targetRatio) {
+            val cropWidth = (sensorHeight * targetRatio).toInt().coerceAtMost(sensorWidth)
+            val left = activeArray.left + (sensorWidth - cropWidth) / 2
+            Rect(left, activeArray.top, left + cropWidth, activeArray.bottom)
+        } else {
+            val cropHeight = (sensorWidth / targetRatio).toInt().coerceAtMost(sensorHeight)
+            val top = activeArray.top + (sensorHeight - cropHeight) / 2
+            Rect(activeArray.left, top, activeArray.right, top + cropHeight)
+        }
     }
 
     private fun closePreviewCamera(onClosed: () -> Unit) {

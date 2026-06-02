@@ -21,9 +21,10 @@ class AutoFitSurfaceView @JvmOverloads constructor(
     private var ratioHeight = 0
 
     fun setAspectRatio(width: Int, height: Int) {
-        if (width < 0 || height < 0) {
-            throw IllegalArgumentException("Size cannot be negative.")
+        if (width <= 0 || height <= 0) {
+            throw IllegalArgumentException("Size must be positive.")
         }
+        if (ratioWidth == width && ratioHeight == height) return
         ratioWidth = width
         ratioHeight = height
         requestLayout()
@@ -36,12 +37,12 @@ class AutoFitSurfaceView @JvmOverloads constructor(
         if (0 == ratioWidth || ratioHeight == 0) {
             setMeasuredDimension(width, height)
         } else {
-            // Scale to FILL (Center Crop) logic:
-            // This maintains perfect proportions while filling the available screen area.
+            // Aspect-fit the viewfinder inside its parent so the selected recording
+            // ratio changes the preview frame itself instead of zooming the content.
             if (width > height * ratioWidth / ratioHeight) {
-                setMeasuredDimension(width, width * ratioHeight / ratioWidth)
-            } else {
                 setMeasuredDimension(height * ratioWidth / ratioHeight, height)
+            } else {
+                setMeasuredDimension(width, width * ratioHeight / ratioWidth)
             }
         }
     }

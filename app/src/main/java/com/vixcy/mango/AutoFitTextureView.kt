@@ -26,9 +26,10 @@ class AutoFitTextureView @JvmOverloads constructor(
      * @param height Relative vertical size
      */
     fun setAspectRatio(width: Int, height: Int) {
-        if (width < 0 || height < 0) {
-            throw IllegalArgumentException("Size cannot be negative.")
+        if (width <= 0 || height <= 0) {
+            throw IllegalArgumentException("Size must be positive.")
         }
+        if (ratioWidth == width && ratioHeight == height) return
         ratioWidth = width
         ratioHeight = height
         requestLayout()
@@ -41,12 +42,12 @@ class AutoFitTextureView @JvmOverloads constructor(
         if (0 == ratioWidth || ratioHeight == 0) {
             setMeasuredDimension(width, height)
         } else {
-            // Scale to FILL (Center Crop) logic:
-            // We want the view to be at least as big as the measured bounds in both dimensions.
+            // Aspect-fit the transformable viewfinder inside its parent. Camera2 then
+            // uses a matrix transform for orientation instead of stretching pixels.
             if (width > height * ratioWidth / ratioHeight) {
-                setMeasuredDimension(width, width * ratioHeight / ratioWidth)
-            } else {
                 setMeasuredDimension(height * ratioWidth / ratioHeight, height)
+            } else {
+                setMeasuredDimension(width, width * ratioHeight / ratioWidth)
             }
         }
     }

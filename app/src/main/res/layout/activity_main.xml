@@ -21,7 +21,7 @@
     android:background="@android:color/black">
 
     <!-- ══ LAYER 0 — Camera viewfinder (above bottom panel) ════════════════ -->
-    <com.vixcy.mango.AutoFitSurfaceView
+    <com.vixcy.mango.AutoFitTextureView
         android:id="@+id/surfaceView"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
@@ -150,6 +150,54 @@
             android:layout_marginBottom="20dp"
             android:background="@color/mango_text_tertiary"
             android:alpha="0.5" />
+
+        <!-- ASPECT RATIO -->
+        <TextView
+            android:id="@+id/tvLabelAspect"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ASPECT RATIO"
+            android:textColor="@color/mango_text_secondary"
+            android:textSize="9sp"
+            android:letterSpacing="0.14"
+            android:layout_marginBottom="6dp"
+            android:alpha="0.6" />
+
+        <FrameLayout
+            android:id="@+id/aspectSelector"
+            android:layout_width="match_parent"
+            android:layout_height="36dp"
+            android:background="@drawable/segmented_track"
+            android:layout_marginBottom="16dp">
+
+            <View
+                android:id="@+id/aspectPill"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_gravity="top|start"
+                android:background="@drawable/seg_pill" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="horizontal">
+                <TextView android:id="@+id/seg16x9"
+                    android:layout_width="0dp" android:layout_height="match_parent"
+                    android:layout_weight="1" android:gravity="center"
+                    android:text="16:9" android:textSize="12sp"
+                    android:clickable="true" android:focusable="true" />
+                <TextView android:id="@+id/seg4x3"
+                    android:layout_width="0dp" android:layout_height="match_parent"
+                    android:layout_weight="1" android:gravity="center"
+                    android:text="4:3" android:textSize="12sp"
+                    android:clickable="true" android:focusable="true" />
+                <TextView android:id="@+id/seg1x1"
+                    android:layout_width="0dp" android:layout_height="match_parent"
+                    android:layout_weight="1" android:gravity="center"
+                    android:text="1:1" android:textSize="12sp"
+                    android:clickable="true" android:focusable="true" />
+            </LinearLayout>
+        </FrameLayout>
 
         <!-- QUALITY -->
         <TextView
